@@ -1,0 +1,23 @@
+{
+  "name": "primerai",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @primerai/backend --filter primerai-desktop --filter primerai-mobile dev",
+    "backend:dev": "pnpm --filter @primerai/backend dev",
+    "desktop:dev": "pnpm --filter primerai-desktop dev",
+    "mobile:dev": "pnpm --filter primerai-mobile start",
+    "db:migrate": "pnpm --filter @primerai/backend db:migrate",
+    "db:studio": "pnpm --filter @primerai/backend db:studio",
+    "infra:up": "docker compose up -d postgres",
+    "infra:down": "docker compose down",
+    "typecheck": "pnpm -r --no-bail typecheck",
+    "lint": "pnpm -r --no-bail lint",
+    "test": "pnpm -r --no-bail test",
+    "setup": "pnpm install && pnpm infra:up && pnpm db:migrate"
+  }
+}

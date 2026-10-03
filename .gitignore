@@ -1,0 +1,39 @@
+node_modules/
+dist/
+build/
+.output/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# rust / tauri
+target/
+primerai-desktop/src-tauri/gen/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# expo
+.expo/
+.expo-shared/
+primerai-mobile/.expo/
+primerai-mobile/web-build/
+primerai-mobile/ios/
+primerai-mobile/android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# misc
+.DS_Store
+coverage/
+.idea/
+*.sqlite
+*.sqlite3

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import type { ChatMessage, Conversation } from "@primerai/shared";
 import { Ellipsis, Trash2 } from "lucide-react";
 import { ApiError, api, getStoredSession, storeSession, type Session } from "./lib/api";
@@ -31,6 +33,11 @@ function App() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [workspaceItems, setWorkspaceItems] = useState<{ label: string; path: string; enabled: boolean }[]>([]);
   const [showWorkspaces, setShowWorkspaces] = useState(false);
+  const [showMemories, setShowMemories] = useState(false);
+  const [memories, setMemories] = useState<{ key: string; value: string; createdAt: string }[]>([]);
+  const [memoryKey, setMemoryKey] = useState("");
+  const [memoryValue, setMemoryValue] = useState("");
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
   const [taskNotice, setTaskNotice] = useState("");
@@ -145,6 +152,28 @@ function App() {
     setWorkspaceItems(next);
   }
 
+  async function loadMemories() {
+    if (!session) return;
+    setMemoryError(null);
+    try { setMemories(await api.listMemories(session.accessToken)); }
+    catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível carregar a memória."); }
+  }
+
+  async function saveMemory() {
+    if (!session || !memoryKey.trim() || !memoryValue.trim()) return;
+    setMemoryError(null);
+    try {
+      await api.saveMemory(session.accessToken, memoryKey, memoryValue);
+      setMemoryKey(""); setMemoryValue(""); await loadMemories();
+    } catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível salvar a memória."); }
+  }
+
+  async function deleteMemory(key: string) {
+    if (!session) return;
+    try { await api.deleteMemory(session.accessToken, key); await loadMemories(); }
+    catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível apagar a memória."); }
+  }
+
   const loadProviders = useCallback(async (active: Session) => {
     return api.listProviders(active.accessToken);
   }, []);
@@ -217,6 +246,56 @@ function App() {
       throw err;
     }
   }, [enterWithSession]);
+
+  const onGoogleSignIn = useCallback(async () => {
+    const webUrl = (import.meta.env.VITE_WEB_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+    const returnUri = isTauri() ? "primerai://auth/callback" : `${window.location.origin}/`;
+    const loginUrl = `${webUrl}/api/auth/google/start?return_uri=${encodeURIComponent(returnUri)}`;
+    if (isTauri()) await openUrl(loginUrl);
+    else window.location.assign(loginUrl);
+  }, []);
+
+  useEffect(() => {
+    const handleCode = async (code: string) => {
+      try {
+        const incoming = await api.exchangeNativeCode(code);
+        storeSession(incoming);
+        await onAuthenticated(incoming);
+      } catch (err) {
+        setBootError(err instanceof Error ? err.message : "não foi possível finalizar o login Google");
+        setGate("anonymous");
+      }
+    };
+    if (!isTauri()) {
+      const code = new URLSearchParams(window.location.hash.slice(1)).get("code");
+      if (code) {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        void handleCode(code);
+      }
+      return;
+    }
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    const handleUrls = async (urls: string[]) => {
+      for (const value of urls) {
+        try {
+          const url = new URL(value);
+          if (url.protocol !== "primerai:") continue;
+          const code = new URLSearchParams(url.hash.slice(1)).get("code");
+          if (!code) continue;
+          await handleCode(code);
+        } catch (err) {
+          setBootError(err instanceof Error ? err.message : "não foi possível finalizar o login Google");
+          setGate("anonymous");
+        }
+      }
+    };
+    void Promise.all([
+      getCurrent().then((urls) => { if (urls && !disposed) return handleUrls(urls); }),
+      onOpenUrl((urls) => { void handleUrls(urls); }).then((off) => { if (disposed) off(); else unlisten = off; }),
+    ]).catch((err) => setBootError(err instanceof Error ? err.message : "não foi possível preparar o callback Google"));
+    return () => { disposed = true; unlisten?.(); };
+  }, [onAuthenticated]);
 
   const onProviderSaved = useCallback(async () => {
     if (!session) return;
@@ -322,7 +401,7 @@ function App() {
     );
   }
 
-  if (gate === "anonymous") return <AuthScreen onAuthenticated={onAuthenticated} />;
+  if (gate === "anonymous") return <AuthScreen onAuthenticated={onAuthenticated} onGoogleSignIn={onGoogleSignIn} />;
 
   if (gate === "connection-error") {
     return (
@@ -369,6 +448,7 @@ function App() {
           <span title={session?.user.email}>{session?.user.email}</span>
           <button className="ghost" onClick={() => setShowSettings(true)}>Providers</button>
           <button className="ghost" onClick={() => setShowWorkspaces(true)}>Pastas autorizadas</button>
+          <button className="ghost" onClick={() => { setShowMemories(true); void loadMemories(); }}>Memória da IA</button>
           <button className="ghost" onClick={() => void logout()}>Sair</button>
         </div>
       </aside>
@@ -437,6 +517,20 @@ function App() {
             <label className="field"><span className="field-label">Nome (ex.: Downloads ou Desktop)</span><input value={workspaceLabel} onChange={(e) => setWorkspaceLabel(e.target.value)} /></label>
             <label className="field"><span className="field-label">Caminho local</span><input value={workspacePath} onChange={(e) => setWorkspacePath(e.target.value)} placeholder="/home/voce/Downloads" /></label>
             <footer><button className="ghost" onClick={() => setShowWorkspaces(false)}>Fechar</button><button className="primary" onClick={() => void saveWorkspaces()}>Adicionar pasta</button></footer>
+          </section>
+        </div>
+      )}
+
+      {showMemories && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="memories-title">
+            <h2 id="memories-title">Memória da IA</h2>
+            <p className="muted">A IA usa estas informações em todos os seus chats. Evite salvar senhas ou dados sensíveis.</p>
+            {memoryError && <p className="alert error">{memoryError}</p>}
+            <div className="workspace-list">{memories.map((item) => <div key={item.key}><strong>{item.key}</strong><p>{item.value}</p><button className="ghost" onClick={() => void deleteMemory(item.key)}>Apagar</button></div>)}</div>
+            <label className="field"><span className="field-label">O que lembrar (ex.: idioma)</span><input value={memoryKey} onChange={(e) => setMemoryKey(e.target.value)} /></label>
+            <label className="field"><span className="field-label">Detalhe</span><textarea value={memoryValue} onChange={(e) => setMemoryValue(e.target.value)} maxLength={2000} /></label>
+            <footer><button className="ghost" onClick={() => setShowMemories(false)}>Fechar</button><button className="primary" onClick={() => void saveMemory()}>Salvar memória</button></footer>
           </section>
         </div>
       )}

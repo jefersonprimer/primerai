@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { GoogleIcon } from '@/components/google-icon';
 import { Button } from '@/components/ui/button';
 import { ApiError, api } from '@/lib/api';
 import { useSession } from '@/state/session';
@@ -11,12 +14,28 @@ import { useSession } from '@/state/session';
 type Mode = 'login' | 'register';
 
 export function LoginScreen() {
-  const { login, register } = useSession();
+  const { login, loginWithSession, register } = useSession();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  async function signInWithGoogle() {
+    setError(null); setBusy(true);
+    try {
+      const redirectUri = Linking.createURL('auth/callback');
+      const webUrl = process.env.EXPO_PUBLIC_WEB_URL ?? 'http://192.168.5.22:3000';
+      const authUrl = `${webUrl.replace(/\/+$/, '')}/api/auth/google/start?return_uri=${encodeURIComponent(redirectUri)}`;
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+      if (result.type !== 'success') return;
+      const code = new URLSearchParams(new URL(result.url).hash.slice(1)).get('code');
+      if (!code) throw new Error('O login Google não retornou um código válido.');
+      await loginWithSession(await api.exchangeNativeCode(code));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível entrar com Google.');
+    } finally { setBusy(false); }
+  }
 
   async function submit() {
     setError(null);
@@ -38,6 +57,12 @@ export function LoginScreen() {
         <ThemedText themeColor="textSecondary" style={styles.subtitle}>
           Entre com a mesma conta do seu PC para o agente reconhecer seus dispositivos.
         </ThemedText>
+
+        <Pressable accessibilityRole="button" disabled={busy} onPress={() => void signInWithGoogle()} style={({ pressed }) => [styles.googleButton, pressed && styles.googleButtonPressed, busy && styles.disabled]}>
+          <GoogleIcon />
+          <ThemedText style={styles.googleLabel}>{busy ? 'Aguarde…' : 'Continuar com Google'}</ThemedText>
+        </Pressable>
+        <View style={styles.separator}><View style={styles.separatorLine} /><ThemedText themeColor="textSecondary" type="small">ou com e-mail</ThemedText><View style={styles.separatorLine} /></View>
 
         <View style={styles.row}>
           <TextInput
@@ -69,19 +94,21 @@ export function LoginScreen() {
 
         <Button onPress={submit} disabled={busy} label={busy ? 'Entrando…' : 'Continuar'} />
 
-        <ThemedText
-          type="linkPrimary"
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
           onPress={() => {
             setError(null);
             setMode((m) => (m === 'login' ? 'register' : 'login'));
           }}
           style={styles.switch}>
-          {mode === 'login' ? 'não tenho conta — criar agora' : 'já tenho conta — entrar'}
-        </ThemedText>
-
-        <ThemedText themeColor="textSecondary" style={styles.footer}>
-          servidor: {api.baseUrl}
-        </ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.switchPrompt}>
+            {mode === 'login' ? 'Ainda não tem uma conta?' : 'Já tem uma conta?'}
+          </ThemedText>
+          <ThemedText type="linkPrimary" style={styles.switchAction}>
+            {mode === 'login' ? 'Criar conta' : 'Entrar'}
+          </ThemedText>
+        </Pressable>
       </SafeAreaView>
     </ThemedView>
   );
@@ -100,6 +127,12 @@ const styles = StyleSheet.create({
   subtitle: {
     marginBottom: 12,
   },
+  googleButton: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 9999, backgroundColor: '#f4f5f3' },
+  googleButtonPressed: { opacity: 0.85 },
+  disabled: { opacity: 0.6 },
+  googleLabel: { color: '#202320', fontWeight: '500', fontSize: 16 },
+  separator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  separatorLine: { height: 1, flex: 1, backgroundColor: '#2a313d' },
   row: {
     flexDirection: 'row',
   },
@@ -119,12 +152,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   switch: {
-    textAlign: 'center',
-    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: 8,
   },
-  footer: {
-    textAlign: 'center',
-    fontSize: 11,
-    marginTop: 20,
-  },
+  switchPrompt: { fontSize: 14 },
+  switchAction: { fontWeight: '600' },
 });

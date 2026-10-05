@@ -69,7 +69,14 @@ Ou separadamente:
 pnpm backend:dev
 pnpm desktop:dev
 pnpm mobile:dev
+pnpm web:dev
 ```
+
+O frontend Next.js fica em `primerai-web` e usa a API do backend para login por e-mail/senha e Google. Para Google OAuth local, copie `primerai-web/.env.example` para `primerai-web/.env.local`, configure `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` do mesmo cliente OAuth, e configure `GOOGLE_CLIENT_ID` no `.env` raiz para a API validar os tokens. No Google Cloud, use `http://localhost:3000` em **Origens JavaScript autorizadas** e `http://localhost:3000/api/auth/google/callback` em **URIs de redirecionamento autorizados**. A API aplica a migration `0002_google_auth.sql` no boot.
+
+Os apps nativos iniciam o mesmo fluxo Google no navegador e recebem um código de uso único via deep link. No mobile, `primerai-mobile/.env.local` define os endereços locais de API e web; ajuste-os se o IP da máquina mudar. Para autenticar no celular físico, o callback do OAuth também precisa ser acessível ao navegador do celular: use um domínio HTTPS ou túnel HTTPS, registre sua origem e `/api/auth/google/callback` no Google Cloud e configure `EXPO_PUBLIC_WEB_URL` e `GOOGLE_REDIRECT_URI` com esse host. `localhost` funciona no navegador desktop da própria máquina, mas no celular aponta para o próprio aparelho.
+
+Os links da página `/baixar` são configurados com `NEXT_PUBLIC_DOWNLOAD_ANDROID`, `NEXT_PUBLIC_DOWNLOAD_IOS`, `NEXT_PUBLIC_DOWNLOAD_WINDOWS`, `NEXT_PUBLIC_DOWNLOAD_MACOS` e `NEXT_PUBLIC_DOWNLOAD_LINUX`. Enquanto estiverem vazios, as plataformas aparecem como “Em breve”.
 
 ## Checagens
 

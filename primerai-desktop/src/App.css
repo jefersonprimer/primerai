@@ -170,6 +170,23 @@ a {
   align-self: center;
 }
 
+.google-auth-button {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f4f5f3;
+  color: #202320;
+  font-weight: 700;
+}
+.google-auth-button:disabled { opacity: .6; }
+.google-auth-button svg { flex: none; }
+.auth-divider { display: flex; align-items: center; gap: .75rem; color: var(--muted); font-size: .75rem; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+
 /* ── shell ──────────────────────────────────────────── */
 
 .app {

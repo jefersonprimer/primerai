@@ -3,6 +3,8 @@ export * from "./conversations";
 export * from "./tasks";
 export * from "./tools";
 
+export type Memory = { key: string; value: string; createdAt: string };
+
 export const API_PREFIX = "/v1";
 
 export const WS_USER_PATH = "/v1/ws";
@@ -16,6 +18,8 @@ export const routes = {
   conversations: "/v1/conversations",
   conversation: (id: string) => `/v1/conversations/${id}`,
   conversationMessages: (id: string) => `/v1/conversations/${id}/messages`,
+  memories: "/v1/memories",
+  memory: (key: string) => `/v1/memories/${encodeURIComponent(key)}`,
   provider: (id: string) => `/v1/providers/${id}`,
   providerTest: (id: string) => `/v1/providers/${id}/test`,
   providerModels: (id: string) => `/v1/providers/${id}/models`,

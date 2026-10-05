@@ -11,6 +11,7 @@ import { providerRoutes } from "./routes/providers.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { agentRoutes } from "./routes/agent.js";
+import { memoryRoutes } from "./routes/memories.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -64,6 +65,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes);
   await app.register(providerRoutes);
   await app.register(conversationRoutes);
+  await app.register(memoryRoutes);
   await app.register(taskRoutes);
   await app.register(agentRoutes);
 

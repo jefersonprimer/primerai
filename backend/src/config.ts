@@ -7,7 +7,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
   DATABASE_URL: z.string().min(1, "DATABASE_URL é obrigatório"),
   PUBLIC_URL: z.string().url().default("http://localhost:8787"),
-  CORS_ORIGIN: z.string().default("http://localhost:1420,http://localhost:8081"),
+  CORS_ORIGIN: z.string().default("http://localhost:1420,http://localhost:8081,http://localhost:3000"),
+  GOOGLE_CLIENT_ID: z.string().optional(),
   PRIMERAI_MASTER_KEY: z
     .string()
     .min(1, "PRIMERAI_MASTER_KEY é obrigatório — gere com: openssl rand -base64 32"),

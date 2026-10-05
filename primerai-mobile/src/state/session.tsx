@@ -17,6 +17,7 @@ interface SessionState {
   refreshProviders: () => Promise<void>;
   removeProvider: (providerId: string) => void;
   login: (email: string, password: string) => Promise<void>;
+  loginWithSession: (session: Session) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -127,6 +128,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [loadProviders],
   );
 
+  const loginWithSession = useCallback(async (next: Session) => {
+    setStatus('loading');
+    try {
+      const me = await api.me(next.accessToken);
+      const validated = { ...next, user: me.user };
+      await storeSession(validated);
+      setSession(validated);
+      await loadProviders(validated);
+      setGateDismissed(false);
+      setStatus('ready');
+    } catch (err) {
+      await storeSession(null);
+      setSession(null);
+      setStatus('anon');
+      throw err;
+    }
+  }, [loadProviders]);
+
   const logout = useCallback(async () => {
     if (session) await api.logout(session.accessToken).catch(() => undefined);
     setSession(null);
@@ -147,10 +166,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refreshProviders,
       removeProvider,
       login,
+      loginWithSession,
       register,
       logout,
     }),
-    [status, session, providers, error, gateDismissed, refresh, refreshProviders, removeProvider, login, register, logout],
+    [status, session, providers, error, gateDismissed, refresh, refreshProviders, removeProvider, login, loginWithSession, register, logout],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

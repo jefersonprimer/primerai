@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { ApiError, api, type Session } from "../lib/api";
+import { GoogleIcon } from "./GoogleIcon";
 
 interface AuthScreenProps {
   onAuthenticated: (session: Session) => Promise<void>;
+  onGoogleSignIn: () => Promise<void>;
   initialError?: string | null;
 }
 
-export function AuthScreen({ onAuthenticated, initialError = null }: AuthScreenProps) {
+export function AuthScreen({ onAuthenticated, onGoogleSignIn, initialError = null }: AuthScreenProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(initialError);
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -40,6 +43,13 @@ export function AuthScreen({ onAuthenticated, initialError = null }: AuthScreenP
           <p className="muted">Use a mesma conta do app mobile.</p>
         </header>
 
+        <button className="google-auth-button" type="button" disabled={busy || googleBusy} onClick={() => {
+          setError(null); setGoogleBusy(true);
+          void onGoogleSignIn().catch((err) => setError(err instanceof Error ? err.message : "não foi possível iniciar o login Google"))
+            .finally(() => setGoogleBusy(false));
+        }}><GoogleIcon size={20} />{googleBusy ? "Abrindo Google…" : "Continuar com Google"}</button>
+        <div className="auth-divider"><span>ou com e-mail</span></div>
+
         <label className="field">
           <span className="field-label">E-mail</span>
           <input
@@ -66,7 +76,7 @@ export function AuthScreen({ onAuthenticated, initialError = null }: AuthScreenP
 
         {error && <p className="alert error">{error}</p>}
 
-        <button className="primary" type="submit" disabled={busy}>
+          <button className="primary" type="submit" disabled={busy}>
           {busy ? "Aguarde…" : mode === "login" ? "Entrar" : "Criar conta"}
         </button>
 

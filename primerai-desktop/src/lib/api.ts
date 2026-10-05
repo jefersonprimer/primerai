@@ -1,4 +1,4 @@
-import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type ProviderId } from "@primerai/shared";
+import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type Memory, type ProviderId } from "@primerai/shared";
 
 const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8787").replace(/\/+$/, "");
 
@@ -95,6 +95,10 @@ export const api = {
     return session;
   },
 
+  exchangeNativeCode: (code: string) => request<{ session: Session }>("/v1/auth/native-exchange", {
+    method: "POST", body: JSON.stringify({ code }),
+  }).then((r) => r.session),
+
   logout: async (token: string): Promise<void> => {
     try {
       await request<void>("/v1/auth/logout", { method: "POST" }, token);
@@ -155,6 +159,10 @@ export const api = {
 
   listConversations: (token: string) =>
     request<{ conversations: Conversation[] }>(routes.conversations, {}, token).then((r) => r.conversations),
+
+  listMemories: (token: string) => request<{ memories: Memory[] }>(routes.memories, {}, token).then((r) => r.memories),
+  saveMemory: (token: string, key: string, value: string) => request<{ memory: Memory }>(routes.memory(key), { method: "PUT", body: JSON.stringify({ value }) }, token).then((r) => r.memory),
+  deleteMemory: (token: string, key: string) => request<void>(routes.memory(key), { method: "DELETE" }, token),
 
   createConversation: (token: string) =>
     request<{ conversation: Conversation }>(routes.conversations, { method: "POST", body: JSON.stringify({}) }, token)

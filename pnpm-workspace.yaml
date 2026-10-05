@@ -3,3 +3,4 @@ packages:
   - "backend"
   - "primerai-desktop"
   - "primerai-mobile"
+  - "primerai-web"

@@ -21,6 +21,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["primerai"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

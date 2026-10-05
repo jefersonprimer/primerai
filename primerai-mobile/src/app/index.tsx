@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  Share,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -17,12 +18,17 @@ import * as DocumentPicker from "expo-document-picker";
 import * as SecureStore from "expo-secure-store";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import {
   ArrowUp,
   Camera,
   ChevronDown,
+  ChevronLeft,
   Copy,
   FileText,
   HatGlasses,
@@ -33,6 +39,7 @@ import {
   Pin,
   Plus,
   Search,
+  Share2,
   SquarePen,
   TextSelect,
   Trash2,
@@ -45,13 +52,17 @@ import {
   BottomSheetModalProvider,
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import type { ChatMessage, Conversation } from "@primerai/shared";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { MaxContentWidth, Spacing } from "@/constants/theme";
+import { useTheme } from "@/hooks/use-theme";
 import { api, type RemoteDevice } from "@/lib/api";
 import { useSession } from "@/state/session";
 
@@ -69,7 +80,10 @@ function nextAnonymousMessageId() {
   return `anonymous-${anonymousMessageSequence}`;
 }
 
-function pinnedConversationStorageKey(userId: string, platform: typeof Platform.OS) {
+function pinnedConversationStorageKey(
+  userId: string,
+  platform: typeof Platform.OS,
+) {
   return platform === "web"
     ? `primerai:pinned-conversations:${userId}`
     : `primerai_pinned_conversations_${userId}`;
@@ -77,12 +91,14 @@ function pinnedConversationStorageKey(userId: string, platform: typeof Platform.
 
 export default function AgentScreen() {
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
   const { providers, session } = useSession();
   const { conversationId: requestedConversationId } = useLocalSearchParams<{
     conversationId?: string;
   }>();
   const accessToken = session?.accessToken;
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [visibleConversationCount, setVisibleConversationCount] = useState(10);
   const [activeId, setActiveId] = useState<string | null>(
     requestedConversationId ?? null,
   );
@@ -97,6 +113,7 @@ export default function AgentScreen() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [taskDevicePickerOpen, setTaskDevicePickerOpen] = useState(false);
+  const [pcTaskMode, setPcTaskMode] = useState(false);
   const [onlineTaskDevices, setOnlineTaskDevices] = useState<RemoteDevice[]>(
     [],
   );
@@ -110,16 +127,26 @@ export default function AgentScreen() {
   const previousActiveIdRef = useRef<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
-  const [messageActionsTarget, setMessageActionsTarget] = useState<ChatMessage | null>(null);
-  const [messageActionsPosition, setMessageActionsPosition] = useState<{ top: number; right: number } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const renameInputRef = useRef<TextInput>(null);
+  const [messageActionsTarget, setMessageActionsTarget] =
+    useState<ChatMessage | null>(null);
+  const [messageActionsPosition, setMessageActionsPosition] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
   const messageRefs = useRef<Record<string, View | null>>({});
-  const [selectableMessageId, setSelectableMessageId] = useState<string | null>(null);
+  const [selectionScreenMessage, setSelectionScreenMessage] =
+    useState<ChatMessage | null>(null);
   const [conversationActionsTarget, setConversationActionsTarget] =
     useState<Conversation | null>(null);
-  const [conversationActionsPosition, setConversationActionsPosition] = useState<{ top: number; right: number } | null>(null);
+  const [conversationActionsPosition, setConversationActionsPosition] =
+    useState<{ top: number; right: number } | null>(null);
   const conversationMenuButtonRef = useRef<View>(null);
   const historyActionsSheetRef = useRef<BottomSheetModal>(null);
-  const historyActionsSnapPoints = useMemo(() => [220], []);
+  const historyActionsSnapPoints = useMemo(() => [270], []);
   const openDrawerGesture = useMemo(
     () =>
       Gesture.Pan()
@@ -151,7 +178,10 @@ export default function AgentScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    const key = pinnedConversationStorageKey(session?.user.id ?? "guest", Platform.OS);
+    const key = pinnedConversationStorageKey(
+      session?.user.id ?? "guest",
+      Platform.OS,
+    );
     const stored =
       Platform.OS === "web"
         ? Promise.resolve(globalThis.localStorage?.getItem(key) ?? null)
@@ -177,7 +207,10 @@ export default function AgentScreen() {
 
   useEffect(() => {
     if (!pinnedIdsLoaded) return;
-    const key = pinnedConversationStorageKey(session?.user.id ?? "guest", Platform.OS);
+    const key = pinnedConversationStorageKey(
+      session?.user.id ?? "guest",
+      Platform.OS,
+    );
     const value = JSON.stringify(pinnedIds);
     if (Platform.OS === "web") globalThis.localStorage?.setItem(key, value);
     else void SecureStore.setItemAsync(key, value);
@@ -192,9 +225,7 @@ export default function AgentScreen() {
         if (cancelled) return;
         setConversations(list);
         setActiveId((current) =>
-          current && list.some((item) => item.id === current)
-            ? current
-            : null,
+          current && list.some((item) => item.id === current) ? current : null,
         );
         setError(null);
       })
@@ -399,11 +430,14 @@ export default function AgentScreen() {
     setMessageActionsTarget(null);
   }
 
+  async function shareMessage(message: ChatMessage) {
+    await Share.share({ message: message.content });
+  }
+
   function editMessage(message: ChatMessage) {
     setDraft(message.content);
     setAttachments([]);
     setMessageActionsTarget(null);
-    setSelectableMessageId(null);
   }
 
   async function deleteConversation() {
@@ -439,6 +473,35 @@ export default function AgentScreen() {
     setConversationActionsPosition(null);
   }
 
+  function requestConversationRename() {
+    if (!conversationActionsTarget) return;
+    setRenameTarget(conversationActionsTarget);
+    setRenameDraft(conversationActionsTarget.title);
+    dismissConversationActions();
+  }
+
+  async function renameConversation() {
+    const title = renameDraft.trim();
+    if (!renameTarget || !title || renaming) return;
+    setRenaming(true);
+    setError(null);
+    try {
+      const updated = await api.updateConversationTitle(
+        session!.accessToken,
+        renameTarget.id,
+        title,
+      );
+      setConversations((current) =>
+        current.map((item) => item.id === updated.id ? updated : item),
+      );
+      setRenameTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "não foi possível renomear a conversa");
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   function toggleConversationPin() {
     if (!conversationActionsTarget) return;
     const id = conversationActionsTarget.id;
@@ -465,6 +528,19 @@ export default function AgentScreen() {
   const active = conversations.find(
     (conversation) => conversation.id === activeId,
   );
+  const displayedConversations = [...conversations]
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )
+    .slice(0, visibleConversationCount)
+    .sort((a, b) => {
+      const aPinnedIndex = pinnedIds.indexOf(a.id);
+      const bPinnedIndex = pinnedIds.indexOf(b.id);
+      if (aPinnedIndex === -1) return bPinnedIndex === -1 ? 0 : 1;
+      if (bPinnedIndex === -1) return -1;
+      return aPinnedIndex - bPinnedIndex;
+    });
   const modelProvider =
     providers.find((provider) => provider.id === active?.providerId) ??
     providers.find((provider) => provider.isDefault) ??
@@ -559,7 +635,7 @@ export default function AgentScreen() {
     setTaskNotice(null);
     const prompt = draft.trim();
     if (!prompt) {
-      setError("Escreva no campo de mensagem o que você quer que o PC faça.");
+      setError("Descreva o que você quer que o PC faça.");
       return;
     }
     if (prompt.length > 8_000) {
@@ -596,6 +672,7 @@ export default function AgentScreen() {
     try {
       await api.createTask(session!.accessToken, device.id, draft.trim());
       setDraft("");
+      setPcTaskMode(false);
       setTaskNotice(`Tarefa enviada para ${device.name}. Acompanhe em Remote.`);
       setTaskDevicePickerOpen(false);
     } catch (err) {
@@ -616,26 +693,36 @@ export default function AgentScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Abrir histórico"
-            style={styles.headerButton}
+            style={({ pressed }) => [
+              styles.headerIconButtonPremium,
+              pressed && styles.headerIconButtonPremiumPressed,
+            ]}
             onPress={() => setDrawerOpen(true)}
           >
-            <Menu size={22} color="#e6e9ef" />
+            <Menu size={24} color="#f2f5ff" />
           </Pressable>
           {!active || anonymous ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
-                anonymous ? "Sair da conversa anônima" : "Criar conversa anônima"
+                anonymous
+                  ? "Sair da conversa anônima"
+                  : "Criar conversa anônima"
               }
-              style={styles.headerButton}
+              style={({ pressed }) => [
+                styles.headerIconButtonPremium,
+                pressed && styles.headerIconButtonPremiumPressed,
+              ]}
               onPress={
-                anonymous ? leaveAnonymousConversation : newAnonymousConversation
+                anonymous
+                  ? leaveAnonymousConversation
+                  : newAnonymousConversation
               }
             >
               {anonymous ? (
-                <X size={22} color="#e6e9ef" />
+                <X size={24} color="#f2f5ff" />
               ) : (
-                <HatGlasses size={22} color="#e6e9ef" />
+                <HatGlasses size={24} color="#f2f5ff" />
               )}
             </Pressable>
           ) : null}
@@ -644,25 +731,38 @@ export default function AgentScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Nova conversa"
-                style={styles.headerButton}
+                style={({ pressed }) => [
+                  styles.headerActionButton,
+                  pressed && styles.headerActionButtonPressed,
+                ]}
                 onPress={() => void newConversation()}
               >
-                <SquarePen size={21} color="#e6e9ef" />
+                <SquarePen size={24} color="#f2f5ff" />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Opções da conversa"
                 ref={conversationMenuButtonRef}
-                style={styles.headerButton}
-                onPress={() => conversationMenuButtonRef.current?.measureInWindow((x, y, width, height) => {
-                  setConversationActionsPosition({
-                    top: insets.top + 56 + 16,
-                    right: Math.max(8, Dimensions.get("window").width - x - width),
-                  });
-                  setConversationActionsTarget(active);
-                })}
+                style={({ pressed }) => [
+                  styles.headerActionButton,
+                  pressed && styles.headerActionButtonPressed,
+                ]}
+                onPress={() =>
+                  conversationMenuButtonRef.current?.measureInWindow(
+                    (x, y, width, height) => {
+                      setConversationActionsPosition({
+                        top: insets.top + 56 + 16,
+                        right: Math.max(
+                          8,
+                          Dimensions.get("window").width - x - width,
+                        ),
+                      });
+                      setConversationActionsTarget(active);
+                    },
+                  )
+                }
               >
-                <MoreVertical size={22} color="#e6e9ef" />
+                <MoreVertical size={24} color="#f2f5ff" />
               </Pressable>
             </View>
           ) : null}
@@ -697,22 +797,39 @@ export default function AgentScreen() {
               messages.map((message) => (
                 <Pressable
                   key={message.id}
-                  ref={(node) => { messageRefs.current[message.id] = node; }}
+                  ref={(node) => {
+                    messageRefs.current[message.id] = node;
+                  }}
                   onLongPress={() => {
                     if (message.role !== "user") return;
-                    messageRefs.current[message.id]?.measureInWindow((x, y, width, height) => {
-                      const menuHeight = 3 * 48 + 12;
-                      const below = y + height + 6;
-                      setMessageActionsPosition({
-                        top: below + menuHeight <= Dimensions.get("window").height ? below : Math.max(8, y - menuHeight - 6),
-                        right: Math.max(8, Dimensions.get("window").width - x - width),
-                      });
-                      setMessageActionsTarget(message);
-                    });
+                    messageRefs.current[message.id]?.measureInWindow(
+                      (x, y, width, height) => {
+                        const menuHeight = 3 * 48 + 12;
+                        const below = y + height + 6;
+                        setMessageActionsPosition({
+                          top:
+                            below + menuHeight <=
+                            Dimensions.get("window").height
+                              ? below
+                              : Math.max(8, y - menuHeight - 6),
+                          right: Math.max(
+                            8,
+                            Dimensions.get("window").width - x - width,
+                          ),
+                        });
+                        setMessageActionsTarget(message);
+                      },
+                    );
                   }}
                   delayLongPress={350}
-                  accessibilityRole={message.role === "user" ? "button" : undefined}
-                  accessibilityLabel={message.role === "user" ? "Opções da sua mensagem" : undefined}
+                  accessibilityRole={
+                    message.role === "user" ? "button" : undefined
+                  }
+                  accessibilityLabel={
+                    message.role === "user"
+                      ? "Opções da sua mensagem"
+                      : undefined
+                  }
                   style={[
                     styles.message,
                     message.role === "user"
@@ -723,9 +840,33 @@ export default function AgentScreen() {
                   <ThemedText type="smallBold">
                     {message.role === "user" ? "Você" : "IA"}
                   </ThemedText>
-                  <ThemedText selectable={selectableMessageId === message.id} style={styles.messageContent}>
+                  <ThemedText
+                    style={styles.messageContent}
+                  >
                     {message.content}
                   </ThemedText>
+                  {message.role === "assistant" && (
+                    <View style={styles.assistantMessageActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Copiar resposta"
+                        hitSlop={8}
+                        style={styles.assistantMessageAction}
+                        onPress={() => void copyMessage(message)}
+                      >
+                        <Copy size={18} color="#aeb7c8" />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Compartilhar resposta"
+                        hitSlop={8}
+                        style={styles.assistantMessageAction}
+                        onPress={() => void shareMessage(message)}
+                      >
+                        <Share2 size={18} color="#aeb7c8" />
+                      </Pressable>
+                    </View>
+                  )}
                 </Pressable>
               ))
             )}
@@ -736,30 +877,131 @@ export default function AgentScreen() {
             )}
           </ScrollView>
 
-          <Modal visible={!!messageActionsTarget} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setMessageActionsTarget(null)}>
+          <Modal
+            visible={!!messageActionsTarget}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setMessageActionsTarget(null)}
+          >
             <View style={styles.messageActionsBackdrop}>
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => setMessageActionsTarget(null)} />
-              {messageActionsPosition && <ThemedView type="backgroundElement" style={[styles.messageActionsSheet, messageActionsPosition]}>
-                <Pressable accessibilityRole="button" style={styles.messageAction} onPress={() => messageActionsTarget && void copyMessage(messageActionsTarget)}>
-                  <Copy size={18} color="#e6e9ef" />
-                  <ThemedText>Copiar</ThemedText>
-                </Pressable>
-                <Pressable accessibilityRole="button" style={styles.messageAction} onPress={() => {
-                  if (messageActionsTarget) setSelectableMessageId(messageActionsTarget.id);
-                  setMessageActionsTarget(null);
-                }}>
-                  <TextSelect size={18} color="#e6e9ef" />
-                  <ThemedText>Selecionar texto</ThemedText>
-                </Pressable>
-                <Pressable accessibilityRole="button" style={styles.messageAction} onPress={() => messageActionsTarget && editMessage(messageActionsTarget)}>
-                  <SquarePen size={18} color="#e6e9ef" />
-                  <ThemedText>Editar mensagem</ThemedText>
-                </Pressable>
-              </ThemedView>}
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => setMessageActionsTarget(null)}
+              />
+              {messageActionsPosition && (
+                <ThemedView
+                  type="backgroundElement"
+                  style={[styles.messageActionsSheet, messageActionsPosition]}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.messageAction}
+                    onPress={() =>
+                      messageActionsTarget &&
+                      void copyMessage(messageActionsTarget)
+                    }
+                  >
+                    <Copy size={20} color="#e6e9ef" />
+                    <ThemedText>Copiar</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.messageAction}
+                    onPress={() => {
+                      setSelectionScreenMessage(messageActionsTarget);
+                      setMessageActionsTarget(null);
+                    }}
+                  >
+                    <TextSelect size={20} color="#e6e9ef" />
+                    <ThemedText>Selecionar texto</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.messageAction}
+                    onPress={() =>
+                      messageActionsTarget && editMessage(messageActionsTarget)
+                    }
+                  >
+                    <SquarePen size={20} color="#e6e9ef" />
+                    <ThemedText>Editar mensagem</ThemedText>
+                  </Pressable>
+                </ThemedView>
+              )}
             </View>
           </Modal>
 
+          <Modal
+            visible={Boolean(selectionScreenMessage)}
+            animationType="slide"
+            statusBarTranslucent
+            onRequestClose={() => setSelectionScreenMessage(null)}
+          >
+            <ThemedView style={styles.textSelectionScreen}>
+              <View
+                style={[
+                  styles.textSelectionHeader,
+                  { paddingTop: insets.top + 8 },
+                ]}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Voltar para a conversa"
+                  hitSlop={10}
+                  style={({ pressed }) => [
+                    styles.textSelectionBack,
+                    {
+                      backgroundColor: theme.backgroundElement,
+                      borderColor: theme.backgroundSelected,
+                    },
+                    pressed && styles.textSelectionBackPressed,
+                  ]}
+                  onPress={() => setSelectionScreenMessage(null)}
+                >
+                  <ChevronLeft size={22} color={theme.text} />
+                </Pressable>
+                <View style={styles.textSelectionHeading}>
+                  <ThemedText
+                    numberOfLines={1}
+                    style={styles.textSelectionTitle}
+                  >
+                    Selecionar texto
+                  </ThemedText>
+                </View>
+              </View>
+              <ScrollView
+                style={styles.textSelectionBody}
+                contentContainerStyle={styles.textSelectionBodyContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <ThemedText selectable style={styles.textSelectionCopy}>
+                  {selectionScreenMessage?.content}
+                </ThemedText>
+              </ScrollView>
+              <View style={{ height: insets.bottom }} />
+            </ThemedView>
+          </Modal>
+
           <ThemedView type="backgroundElement" style={styles.composer}>
+            {pcTaskMode && (
+              <View style={styles.pcTaskModeRow}>
+                <View style={styles.pcTaskModeBadge}>
+                  <Laptop size={16} color="#c8d2e8" />
+                  <ThemedText type="smallBold">Executar no PC</ThemedText>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Voltar para mensagem do chat"
+                  hitSlop={8}
+                  onPress={() => {
+                    setPcTaskMode(false);
+                    setError(null);
+                  }}
+                >
+                  <X size={18} color="#8b94a5" />
+                </Pressable>
+              </View>
+            )}
             {attachments.length > 0 && (
               <View style={styles.attachmentChips}>
                 {attachments.map((item, index) => (
@@ -822,9 +1064,11 @@ export default function AgentScreen() {
                 );
               }}
               placeholder={
-                activeId || anonymous
+                pcTaskMode
+                  ? "Descreva o que você quer que o PC faça…"
+                  : activeId || anonymous
                   ? "Escreva sua mensagem…"
-                  : "Escreva uma mensagem ou tarefa para o PC…"
+                  : "Escreva uma mensagem…"
               }
               placeholderTextColor="#8b94a5"
               editable={!busy && !taskBusy}
@@ -855,7 +1099,7 @@ export default function AgentScreen() {
                   })
                 }
               >
-                <Plus size={22} color="#e6e9ef" />
+                <Plus size={20} color="#e6e9ef" />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -879,15 +1123,27 @@ export default function AgentScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Enviar mensagem"
-                disabled={(!activeId && !anonymous) || !draft.trim() || busy}
-                onPress={() => void send()}
+                disabled={
+                  pcTaskMode
+                    ? !draft.trim() || taskBusy
+                    : (!activeId && !anonymous) || !draft.trim() || busy
+                }
+                onPress={() =>
+                  pcTaskMode ? void requestPcTask() : void send()
+                }
                 style={[
                   styles.sendButton,
-                  ((!activeId && !anonymous) || !draft.trim() || busy) &&
+                  (pcTaskMode
+                    ? !draft.trim() || taskBusy
+                    : (!activeId && !anonymous) || !draft.trim() || busy) &&
                     styles.sendDisabled,
                 ]}
               >
-                <ArrowUp size={20} color="#0d0f14" />
+                {pcTaskMode ? (
+                  <Laptop size={19} color="#0d0f14" />
+                ) : (
+                  <ArrowUp size={20} color="#0d0f14" />
+                )}
               </Pressable>
             </View>
             {taskNotice && (
@@ -902,7 +1158,10 @@ export default function AgentScreen() {
           <GestureDetector gesture={openDrawerGesture}>
             <View
               pointerEvents="box-only"
-              style={[styles.drawerOpenGestureArea, { top: insets.top + 56, bottom: insets.bottom }]}
+              style={[
+                styles.drawerOpenGestureArea,
+                { top: insets.top + 56, bottom: insets.bottom },
+              ]}
             />
           </GestureDetector>
         )}
@@ -944,7 +1203,9 @@ export default function AgentScreen() {
                   <View style={styles.attachmentOptionIcon}>
                     <Camera size={24} color="#c8d2e8" />
                   </View>
-                  <ThemedText style={styles.attachmentOptionLabel}>Câmera</ThemedText>
+                  <ThemedText style={styles.attachmentOptionLabel}>
+                    Câmera
+                  </ThemedText>
                 </Pressable>
                 <Pressable
                   style={styles.attachmentOption}
@@ -953,7 +1214,9 @@ export default function AgentScreen() {
                   <View style={styles.attachmentOptionIcon}>
                     <ImageIcon size={24} color="#c8d2e8" />
                   </View>
-                  <ThemedText style={styles.attachmentOptionLabel}>Fotos</ThemedText>
+                  <ThemedText style={styles.attachmentOptionLabel}>
+                    Fotos
+                  </ThemedText>
                 </Pressable>
                 <Pressable
                   style={styles.attachmentOption}
@@ -962,12 +1225,19 @@ export default function AgentScreen() {
                   <View style={styles.attachmentOptionIcon}>
                     <FileText size={24} color="#c8d2e8" />
                   </View>
-                  <ThemedText style={styles.attachmentOptionLabel}>Arquivos</ThemedText>
+                  <ThemedText style={styles.attachmentOptionLabel}>
+                    Arquivos
+                  </ThemedText>
                 </Pressable>
                 <Pressable
                   style={styles.attachmentOption}
                   disabled={taskBusy}
-                  onPress={() => void requestPcTask()}
+                  onPress={() => {
+                    setAttachmentMenuOpen(false);
+                    setPcTaskMode(true);
+                    setError(null);
+                    setTaskNotice(null);
+                  }}
                 >
                   <View style={styles.attachmentOptionIcon}>
                     <Laptop size={24} color="#c8d2e8" />
@@ -1023,221 +1293,241 @@ export default function AgentScreen() {
           onRequestClose={() => setDrawerOpen(false)}
         >
           <GestureHandlerRootView style={styles.bottomSheetGestureRoot}>
-          <BottomSheetModalProvider>
-          <View style={styles.drawerBackdrop}>
-            <Pressable
-              style={styles.backdropTouch}
-              onPress={() => setDrawerOpen(false)}
-            />
-            <GestureDetector gesture={closeDrawerGesture}>
-              <ThemedView
-                type="backgroundElement"
-                style={[
-                  styles.drawer,
-                  {
-                    paddingTop: insets.top,
-                    paddingBottom: insets.bottom,
-                    paddingLeft: Math.max(18, insets.left + 18),
-                    paddingRight: Math.max(18, insets.right + 18),
-                  },
-                ]}
-              >
-              <View style={styles.drawerHead}>
-                <ThemedText type="small" style={styles.drawerBrand}>
-                  PrimerAi
-                </ThemedText>
+            <BottomSheetModalProvider>
+              <View style={styles.drawerBackdrop}>
                 <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Fechar histórico"
-                  hitSlop={10}
+                  style={styles.backdropTouch}
                   onPress={() => setDrawerOpen(false)}
-                >
-                  <X size={24} color="#aeb7c8" />
-                </Pressable>
-              </View>
-              <Pressable
-                style={styles.newChatButton}
-                onPress={() => void newConversation()}
-              >
-                <View style={styles.newChatIcon}>
-                  <SquarePen size={24} color="#f4f6ff" />
-                </View>
-                <ThemedText>Novo chat</ThemedText>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Buscar conversas"
-                style={styles.searchLink}
-                onPress={() => {
-                  setDrawerOpen(false);
-                  router.push("/search");
-                }}
-              >
-                <Search size={24} color="#c8d2e8" />
-                <ThemedText>Buscar conversas</ThemedText>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Abrir o Remote"
-                style={styles.remoteLink}
-                onPress={() => {
-                  setDrawerOpen(false);
-                  router.push("/remote");
-                }}
-              >
-                <Laptop size={24} color="#c8d2e8" />
-                <ThemedText>Remote</ThemedText>
-              </Pressable>
-              <View style={styles.drawerDivider} />
-              <ScrollView
-                style={styles.historyList}
-                contentContainerStyle={styles.historyListContent}
-              >
-                {[...conversations]
-                  .sort((a, b) =>
-                    pinnedIds.indexOf(a.id) === -1
-                      ? pinnedIds.indexOf(b.id) === -1
-                        ? 0
-                        : 1
-                      : pinnedIds.indexOf(b.id) === -1
-                        ? -1
-                        : pinnedIds.indexOf(a.id) - pinnedIds.indexOf(b.id),
-                  )
-                  .map((conversation) => (
-                    <View
-                      key={conversation.id}
-                      style={[
-                        styles.historyItem,
-                        activeId === conversation.id && styles.historyActive,
-                      ]}
-                    >
+                />
+                <GestureDetector gesture={closeDrawerGesture}>
+                  <ThemedView
+                    type="backgroundElement"
+                    style={[
+                      styles.drawer,
+                      {
+                        paddingTop: Math.max(0, insets.top - 12),
+                        paddingBottom: Math.max(0, insets.bottom - 12),
+                        paddingLeft: Math.max(18, insets.left + 18),
+                        paddingRight: Math.max(18, insets.right + 18),
+                      },
+                    ]}
+                  >
+                    <View style={styles.drawerHead}>
+                      <ThemedText type="small" style={styles.drawerBrand}>
+                        PrimerAi
+                      </ThemedText>
                       <Pressable
-                        style={styles.historySelect}
-                        onPress={() => void chooseConversation(conversation)}
-                        onLongPress={() => {
-                          openHistoryConversationActions(conversation);
-                        }}
-                        delayLongPress={450}
+                        accessibilityRole="button"
+                        accessibilityLabel="Fechar histórico"
+                        hitSlop={10}
+                        onPress={() => setDrawerOpen(false)}
                       >
-                        <ThemedText numberOfLines={1}>
-                          {conversation.title}
+                        <X size={24} color="#aeb7c8" />
+                      </Pressable>
+                    </View>
+                    <Pressable
+                      style={styles.newChatButton}
+                      onPress={() => void newConversation()}
+                    >
+                      <View style={styles.newChatIcon}>
+                        <SquarePen size={24} color="#f4f6ff" />
+                      </View>
+                      <ThemedText>Novo chat</ThemedText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Buscar conversas"
+                      style={styles.searchLink}
+                      onPress={() => {
+                        setDrawerOpen(false);
+                        router.push("/search");
+                      }}
+                    >
+                      <Search size={24} color="#c8d2e8" />
+                      <ThemedText>Buscar conversas</ThemedText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Abrir o Remote"
+                      style={styles.remoteLink}
+                      onPress={() => {
+                        setDrawerOpen(false);
+                        router.push("/remote");
+                      }}
+                    >
+                      <Laptop size={24} color="#c8d2e8" />
+                      <ThemedText>Remote</ThemedText>
+                    </Pressable>
+                    <View style={styles.drawerDivider} />
+                    <ScrollView
+                      style={styles.historyList}
+                      contentContainerStyle={styles.historyListContent}
+                    >
+                      {displayedConversations.map((conversation) => (
+                        <View
+                          key={conversation.id}
+                          style={[
+                            styles.historyItem,
+                            activeId === conversation.id &&
+                              styles.historyActive,
+                          ]}
+                        >
+                          <Pressable
+                            style={styles.historySelect}
+                            onPress={() =>
+                              void chooseConversation(conversation)
+                            }
+                            onLongPress={() => {
+                              openHistoryConversationActions(conversation);
+                            }}
+                            delayLongPress={450}
+                          >
+                            <ThemedText numberOfLines={1}>
+                              {conversation.title}
+                            </ThemedText>
+                            <ThemedText
+                              themeColor="textSecondary"
+                              type="small"
+                              numberOfLines={1}
+                            >
+                              {conversation.model}
+                            </ThemedText>
+                          </Pressable>
+                        </View>
+                      ))}
+                      {conversations.length > visibleConversationCount && (
+                        <Pressable
+                          accessibilityRole="button"
+                          style={styles.loadMoreConversations}
+                          onPress={() =>
+                            setVisibleConversationCount((count) => count + 10)
+                          }
+                        >
+                          <ThemedText style={styles.loadMoreConversationsLabel}>
+                            Ver mais conversas
+                          </ThemedText>
+                        </Pressable>
+                      )}
+                      {conversations.length === 0 && (
+                        <ThemedText themeColor="textSecondary">
+                          Seu histórico aparecerá aqui.
+                        </ThemedText>
+                      )}
+                    </ScrollView>
+                    <View style={styles.accountRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Abrir configurações"
+                        style={styles.avatar}
+                        onPress={() => {
+                          setDrawerOpen(false);
+                          router.push("/settings");
+                        }}
+                      >
+                        <ThemedText style={styles.avatarLetter}>
+                          {session?.user.email
+                            ?.trim()
+                            .charAt(0)
+                            .toUpperCase() || "?"}
+                        </ThemedText>
+                      </Pressable>
+                      <View style={styles.accountCopy}>
+                        <ThemedText type="smallBold" numberOfLines={1}>
+                          Sua conta
                         </ThemedText>
                         <ThemedText
                           themeColor="textSecondary"
                           type="small"
                           numberOfLines={1}
                         >
-                          {conversation.model}
+                          {session?.user.email ?? ""}
                         </ThemedText>
-                      </Pressable>
+                      </View>
                     </View>
-                  ))}
-                {conversations.length === 0 && (
-                  <ThemedText themeColor="textSecondary">
-                    Seu histórico aparecerá aqui.
-                  </ThemedText>
+                  </ThemedView>
+                </GestureDetector>
+              </View>
+              <BottomSheetModal
+                ref={historyActionsSheetRef}
+                snapPoints={historyActionsSnapPoints}
+                enableDynamicSizing={false}
+                enablePanDownToClose
+                enableHandlePanningGesture
+                backdropComponent={(props) => (
+                  <BottomSheetBackdrop
+                    {...props}
+                    appearsOnIndex={0}
+                    disappearsOnIndex={-1}
+                    opacity={0.48}
+                    pressBehavior="close"
+                  />
                 )}
-              </ScrollView>
-              <View style={styles.accountRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Abrir configurações"
-                  style={styles.avatar}
-                  onPress={() => {
-                    setDrawerOpen(false);
-                    router.push("/settings");
-                  }}
-                >
-                  <ThemedText style={styles.avatarLetter}>
-                    {session?.user.email?.trim().charAt(0).toUpperCase() || "?"}
-                  </ThemedText>
-                </Pressable>
-                <View style={styles.accountCopy}>
-                  <ThemedText type="smallBold" numberOfLines={1}>
-                    Sua conta
-                  </ThemedText>
-                  <ThemedText
-                    themeColor="textSecondary"
-                    type="small"
-                    numberOfLines={1}
+                backgroundStyle={styles.historyActionsSheetBackground}
+                handleIndicatorStyle={styles.historyActionsHandle}
+                onDismiss={() => setConversationActionsTarget(null)}
+              >
+                <BottomSheetView style={styles.historyActionsContent}>
+                  <View style={styles.historyActionsHeader}>
+                    <ThemedText
+                      type="smallBold"
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
+                      style={styles.historyActionsTitle}
+                    >
+                      {conversationActionsTarget?.title}
+                    </ThemedText>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Fechar opções da conversa"
+                      hitSlop={8}
+                      style={styles.historyActionsClose}
+                      onPress={dismissConversationActions}
+                    >
+                      <X size={22} color="#c8d2e8" />
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.conversationAction}
+                    onPress={requestConversationRename}
                   >
-                    {session?.user.email ?? ""}
-                  </ThemedText>
-                </View>
-              </View>
-              </ThemedView>
-            </GestureDetector>
-          </View>
-          <BottomSheetModal
-            ref={historyActionsSheetRef}
-            snapPoints={historyActionsSnapPoints}
-            bottomInset={insets.bottom}
-            enableDynamicSizing={false}
-            enablePanDownToClose
-            enableHandlePanningGesture
-            backdropComponent={(props) => (
-              <BottomSheetBackdrop
-                {...props}
-                appearsOnIndex={0}
-                disappearsOnIndex={-1}
-                opacity={0.48}
-                pressBehavior="close"
-              />
-            )}
-            backgroundStyle={styles.historyActionsSheetBackground}
-            handleIndicatorStyle={styles.historyActionsHandle}
-            onDismiss={() => setConversationActionsTarget(null)}
-          >
-            <BottomSheetView
-              style={styles.historyActionsContent}
-            >
-              <View style={styles.historyActionsHeader}>
-                <ThemedText
-                  type="smallBold"
-                  numberOfLines={2}
-                  ellipsizeMode="tail"
-                  style={styles.historyActionsTitle}
-                >
-                  {conversationActionsTarget?.title}
-                </ThemedText>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Fechar opções da conversa"
-                  hitSlop={8}
-                  style={styles.historyActionsClose}
-                  onPress={dismissConversationActions}
-                >
-                  <X size={22} color="#c8d2e8" />
-                </Pressable>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.conversationAction}
-                onPress={toggleConversationPin}
-              >
-                <Pin size={24} color="#c8d2e8" />
-                <ThemedText style={styles.conversationActionLabel}>
-                  {pinnedIds.includes(conversationActionsTarget?.id ?? "")
-                    ? "Desafixar"
-                    : "Fixar"}
-                </ThemedText>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.conversationAction}
-                onPress={requestConversationDelete}
-              >
-                <Trash2 size={24} color="#c8d2e8" />
-                <ThemedText style={styles.conversationActionLabel}>Apagar</ThemedText>
-              </Pressable>
-            </BottomSheetView>
-          </BottomSheetModal>
-          </BottomSheetModalProvider>
+                    <SquarePen size={24} color="#c8d2e8" />
+                    <ThemedText style={styles.conversationActionLabel}>
+                      Renomear
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.conversationAction}
+                    onPress={toggleConversationPin}
+                  >
+                    <Pin size={24} color="#c8d2e8" />
+                    <ThemedText style={styles.conversationActionLabel}>
+                      {pinnedIds.includes(conversationActionsTarget?.id ?? "")
+                        ? "Desafixar"
+                        : "Fixar"}
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={styles.conversationAction}
+                    onPress={requestConversationDelete}
+                  >
+                    <Trash2 size={24} color="#c8d2e8" />
+                    <ThemedText style={styles.conversationActionLabel}>
+                      Apagar
+                    </ThemedText>
+                  </Pressable>
+                </BottomSheetView>
+              </BottomSheetModal>
+            </BottomSheetModalProvider>
           </GestureHandlerRootView>
         </Modal>
 
         <Modal
-          visible={Boolean(conversationActionsTarget && conversationActionsPosition)}
+          visible={Boolean(
+            conversationActionsTarget && conversationActionsPosition,
+          )}
           transparent
           animationType="fade"
           statusBarTranslucent
@@ -1246,13 +1536,23 @@ export default function AgentScreen() {
           }}
         >
           <View style={styles.conversationActionsBackdrop}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={dismissConversationActions} />
-            <ThemedView type="backgroundElement" style={[
-              styles.actionsCard,
-              styles.actionsPopover,
-              conversationActionsPosition ?? undefined,
-            ]}>
-              <ThemedText type="smallBold" numberOfLines={2} ellipsizeMode="tail">
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={dismissConversationActions}
+            />
+            <ThemedView
+              type="backgroundElement"
+              style={[
+                styles.actionsCard,
+                styles.actionsPopover,
+                conversationActionsPosition ?? undefined,
+              ]}
+            >
+              <ThemedText
+                type="smallBold"
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
                 {conversationActionsTarget?.title}
               </ThemedText>
               <Pressable
@@ -1260,7 +1560,7 @@ export default function AgentScreen() {
                 style={styles.conversationAction}
                 onPress={toggleConversationPin}
               >
-                <Pin size={24} color="#c8d2e8" />
+                <Pin size={20} color="#c8d2e8" />
                 <ThemedText style={styles.conversationActionLabel}>
                   {pinnedIds.includes(conversationActionsTarget?.id ?? "")
                     ? "Desafixar"
@@ -1272,9 +1572,58 @@ export default function AgentScreen() {
                 style={styles.conversationAction}
                 onPress={requestConversationDelete}
               >
-                <Trash2 size={24} color="#c8d2e8" />
-                <ThemedText style={styles.conversationActionLabel}>Apagar</ThemedText>
+                <Trash2 size={20} color="#c8d2e8" />
+                <ThemedText style={styles.conversationActionLabel}>
+                  Apagar
+                </ThemedText>
               </Pressable>
+            </ThemedView>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={Boolean(renameTarget)}
+          transparent
+          animationType="fade"
+          onShow={() => {
+            requestAnimationFrame(() => {
+              setTimeout(() => renameInputRef.current?.focus(), 100);
+            });
+          }}
+          onRequestClose={() => !renaming && setRenameTarget(null)}
+        >
+          <View style={styles.confirmBackdrop}>
+            <ThemedView type="backgroundElement" style={styles.confirmCard}>
+              <ThemedText type="smallBold">Renomear conversa</ThemedText>
+              <TextInput
+                ref={renameInputRef}
+                maxLength={120}
+                placeholder="Nome da conversa"
+                placeholderTextColor="#8791a5"
+                returnKeyType="done"
+                value={renameDraft}
+                onChangeText={setRenameDraft}
+                onSubmitEditing={() => void renameConversation()}
+                style={styles.renameInput}
+              />
+              <View style={styles.confirmActions}>
+                <Pressable
+                  disabled={renaming}
+                  onPress={() => setRenameTarget(null)}
+                  style={styles.cancelButton}
+                >
+                  <ThemedText>Cancelar</ThemedText>
+                </Pressable>
+                <Pressable
+                  disabled={renaming || !renameDraft.trim()}
+                  onPress={() => void renameConversation()}
+                  style={styles.renameButton}
+                >
+                  <ThemedText style={styles.deleteLabel}>
+                    {renaming ? "Salvando…" : "Salvar"}
+                  </ThemedText>
+                </Pressable>
+              </View>
             </ThemedView>
           </View>
         </Modal>
@@ -1339,10 +1688,66 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: "transparent",
   },
-  headerButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "#252b38" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerButton: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    backgroundColor: "#252b38",
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+  },
+  headerActionButtonPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.95 }],
+  },
+  headerIconButtonPremium: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: "rgba(122,138,180,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(226,234,255,0.30)",
+    shadowColor: "#05070c",
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  headerIconButtonPremiumPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.95 }],
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    padding: 3,
+    borderRadius: 999,
+    backgroundColor: "rgba(122,138,180,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(226,234,255,0.30)",
+    shadowColor: "#05070c",
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
   chatArea: { flex: 1 },
-  drawerOpenGestureArea: { position: "absolute", left: 0, width: 28, zIndex: 3 },
+  drawerOpenGestureArea: {
+    position: "absolute",
+    left: 0,
+    width: 28,
+    zIndex: 3,
+  },
   messageList: {
     flexGrow: 1,
     justifyContent: "flex-end",
@@ -1362,14 +1767,70 @@ const styles = StyleSheet.create({
   userMessage: { alignSelf: "flex-end", backgroundColor: "#243050" },
   assistantMessage: { alignSelf: "flex-start", backgroundColor: "#161a22" },
   messageContent: { lineHeight: 21 },
+  textSelectionScreen: { flex: 1, backgroundColor: "#0d1017" },
+  textSelectionHeader: {
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  textSelectionBack: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  textSelectionBackPressed: { opacity: 0.75, transform: [{ scale: 0.96 }] },
+  textSelectionHeading: { flex: 1, gap: 2 },
+  textSelectionTitle: { fontSize: 22, fontWeight: "500" },
+  textSelectionBody: { flex: 1 },
+  textSelectionBodyContent: { padding: 20 },
+  textSelectionCopy: { fontSize: 16, lineHeight: 25 },
+  assistantMessageActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 18,
+    marginTop: 5,
+  },
+  assistantMessageAction: {
+    minWidth: 28,
+    minHeight: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   messageActionsBackdrop: { flex: 1 },
-  messageActionsSheet: { position: "absolute", minWidth: 190, padding: 6, borderRadius: 14, gap: 0, elevation: 12, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  messageAction: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 10 },
+  messageActionsSheet: {
+    position: "absolute",
+    minWidth: 200,
+    padding: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#343a47",
+    gap: 0,
+    elevation: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  messageAction: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 10,
+  },
   composer: {
     gap: Spacing.two,
     padding: 10,
     marginBottom: 10,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(226,234,255,0.30)",
   },
   attachmentChips: {
     flexDirection: "row",
@@ -1414,21 +1875,37 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     color: "#e6e9ef",
     fontSize: 16,
+    fontWeight: "400",
     textAlignVertical: "top",
   },
   composerBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: Spacing.two,
+  },
+  pcTaskModeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  pcTaskModeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#272d3d",
   },
   barButton: {
     width: 38,
     height: 38,
-    borderRadius: 19,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#252b38",
+    backgroundColor: "#272d3d",
   },
   modelButton: {
     height: 38,
@@ -1436,20 +1913,21 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     gap: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 14,
     borderRadius: 999,
-    backgroundColor: "#161a22",
+    backgroundColor: "#272d3d",
     maxWidth: "65%",
   },
   modelLabel: { flexShrink: 1 },
   sendButton: {
     width: 38,
     height: 38,
-    borderRadius: 19,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
+    marginLeft: "auto",
     backgroundColor: "#6f8cff",
   },
   sendDisabled: { opacity: 0.45 },
@@ -1505,7 +1983,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingBottom: 16,
+    paddingBottom: 20,
+    paddingHorizontal: 16,
   },
   drawerBrand: {
     fontSize: 20,
@@ -1559,6 +2038,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
     paddingTop: 14,
+    paddingHorizontal: 16,
     marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#343a47",
@@ -1582,6 +2062,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 5,
   },
+  loadMoreConversations: {
+    alignItems: "center",
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  loadMoreConversationsLabel: { color: "#aebde0", fontWeight: "600" },
   historySelect: { flex: 1, minWidth: 0, paddingVertical: 11, gap: 4 },
   actionsCard: {
     borderRadius: 14,
@@ -1589,14 +2075,46 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   conversationActionsBackdrop: { flex: 1 },
-  actionsPopover: { position: "absolute", width: 270, padding: 10, gap: 4, elevation: 12, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  historyActionsSheetBackground: { backgroundColor: "#161a22", borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  actionsPopover: {
+    position: "absolute",
+    width: 270,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#343a47",
+    gap: 4,
+    elevation: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    borderRadius: 16,
+  },
+  historyActionsSheetBackground: {
+    backgroundColor: "#161a22",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
   historyActionsHandle: { width: 40, backgroundColor: "#657087" },
-  historyActionsContent: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12, gap: 8 },
+  historyActionsContent: {
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 12,
+    gap: 8,
+  },
   bottomSheetGestureRoot: { flex: 1 },
-  historyActionsHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  historyActionsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   historyActionsTitle: { flex: 1 },
-  historyActionsClose: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  historyActionsClose: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   conversationAction: {
     minHeight: 46,
     flexDirection: "row",
@@ -1623,6 +2141,20 @@ const styles = StyleSheet.create({
   confirmCopy: { lineHeight: 21 },
   confirmActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   cancelButton: { paddingHorizontal: 12, paddingVertical: 10 },
+  renameInput: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: "#343a47",
+    borderRadius: 9,
+    paddingHorizontal: 12,
+    color: "#f0f3fb",
+  },
+  renameButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 9,
+    backgroundColor: "#405a96",
+  },
   deleteButton: {
     paddingHorizontal: 14,
     paddingVertical: 10,

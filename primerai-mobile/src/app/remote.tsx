@@ -7,7 +7,7 @@ import {
   View,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { ArrowLeft, Trash2, X } from 'lucide-react-native';
+import { ChevronLeft, Trash2, X } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -106,15 +106,10 @@ export default function RemoteScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Voltar ao chat" hitSlop={10} style={styles.backButton} onPress={() => router.replace('/')}>
-            <ArrowLeft size={20} color="#e6e9ef" />
+          <Pressable accessibilityRole="button" accessibilityLabel="Voltar ao chat" hitSlop={10} style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]} onPress={() => router.replace('/')}>
+            <ChevronLeft size={30} color="#f2f5ff" />
           </Pressable>
-          <View style={styles.headerTitle}>
-            <ThemedText type="subtitle">Tarefas</ThemedText>
-            <ThemedText themeColor="textSecondary" type="small">
-              Acompanhe, cancele ou apague tarefas enviadas ao PC.
-            </ThemedText>
-          </View>
+          <ThemedText type="subtitle" style={styles.headerTitle}>Tarefas</ThemedText>
         </View>
 
         {error && <ThemedText style={styles.error}>{error}</ThemedText>}
@@ -189,12 +184,26 @@ const styles = StyleSheet.create({
     minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2a313d',
     marginBottom: Spacing.two,
   },
-  backButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  headerTitle: { flex: 1, gap: 2 },
+  backButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(122,138,180,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(226,234,255,0.30)',
+    shadowColor: '#05070c',
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  backButtonPressed: { opacity: 0.82, transform: [{ scale: 0.95 }] },
+  headerTitle: { flex: 1, fontSize: 22, fontWeight: '500' },
   list: { gap: 10, paddingBottom: Spacing.three },
   taskCard: { gap: 8, padding: 12, borderRadius: 12 },
   taskHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },

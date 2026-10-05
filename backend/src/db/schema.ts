@@ -50,6 +50,7 @@ const timestamps = {
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
+  googleSub: text("google_sub").unique(),
   name: text("name"),
   passwordHash: text("password_hash").notNull(),
   ...timestamps,
@@ -69,6 +70,19 @@ export const sessions = pgTable(
     ...timestamps,
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+export const nativeAuthCodes = pgTable(
+  "native_auth_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("native_auth_codes_expiry_idx").on(t.expiresAt)],
 );
 
 /**
@@ -315,7 +329,7 @@ export const auditLog = pgTable(
   (t) => [index("audit_log_user_idx").on(t.userId, t.createdAt)],
 );
 
-/** Fase futura: memória / preferências ("sempre salve em ~/Relatórios") */
+/** Preferências e fatos que a IA deve lembrar entre conversas. */
 export const memories = pgTable(
   "memories",
   {

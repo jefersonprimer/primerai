@@ -5,9 +5,10 @@ import { memories } from "../db/schema.js";
 
 const KeySchema = z.string().trim().min(1).max(120);
 const ValueSchema = z.string().trim().min(1).max(2_000);
+const CategorySchema = z.enum(["preference", "project", "person", "goal", "context", "history"]);
 
-function toMemory(row: typeof memories.$inferSelect) {
-  return { key: row.key, value: typeof row.value === "string" ? row.value : JSON.stringify(row.value), createdAt: row.createdAt.toISOString() };
+export function toMemory(row: typeof memories.$inferSelect) {
+  return { key: row.key, value: typeof row.value === "string" ? row.value : JSON.stringify(row.value), category: row.category, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
 }
 
 export async function memoryRoutes(app: FastifyInstance) {
@@ -22,15 +23,27 @@ export async function memoryRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { key: string } }>("/v1/memories/:key", pre, async (req, reply) => {
     const key = KeySchema.safeParse(req.params.key);
-    const body = z.object({ value: ValueSchema }).safeParse(req.body);
+    const body = z.object({ value: ValueSchema, category: CategorySchema.optional() }).safeParse(req.body);
     if (!key.success || !body.success) {
       return reply.code(400).send({ error: { code: "invalid_body", message: "Informe uma chave e um valor de memória válidos." } });
     }
     const userId = app.requireUser(req).id;
-    const [row] = await db.insert(memories).values({ userId, key: key.data, value: body.data.value })
-      .onConflictDoUpdate({ target: [memories.userId, memories.key], set: { value: body.data.value } })
+    const [row] = await db.insert(memories).values({ userId, key: key.data, value: body.data.value, category: body.data.category ?? "context" })
+      .onConflictDoUpdate({ target: [memories.userId, memories.key], set: { value: body.data.value, category: body.data.category ?? "context", updatedAt: new Date() } })
       .returning();
     return { memory: toMemory(row!) };
+  });
+
+  app.patch<{ Params: { key: string } }>("/v1/memories/:key", pre, async (req, reply) => {
+    const key = KeySchema.safeParse(req.params.key);
+    const body = z.object({ value: ValueSchema.optional(), category: CategorySchema.optional() })
+      .refine((value) => value.value !== undefined || value.category !== undefined).safeParse(req.body);
+    if (!key.success || !body.success) return reply.code(400).send({ error: { code: "invalid_body", message: "Informe um valor ou categoria válidos." } });
+    const userId = app.requireUser(req).id;
+    const [row] = await db.update(memories).set({ ...body.data, updatedAt: new Date() })
+      .where(and(eq(memories.userId, userId), eq(memories.key, key.data))).returning();
+    if (!row) return reply.code(404).send({ error: { code: "not_found", message: "memória não encontrada" } });
+    return { memory: toMemory(row) };
   });
 
   app.delete<{ Params: { key: string } }>("/v1/memories/:key", pre, async (req, reply) => {

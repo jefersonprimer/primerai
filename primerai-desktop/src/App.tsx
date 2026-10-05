@@ -34,9 +34,10 @@ function App() {
   const [workspaceItems, setWorkspaceItems] = useState<{ label: string; path: string; enabled: boolean }[]>([]);
   const [showWorkspaces, setShowWorkspaces] = useState(false);
   const [showMemories, setShowMemories] = useState(false);
-  const [memories, setMemories] = useState<{ key: string; value: string; createdAt: string }[]>([]);
+  const [memories, setMemories] = useState<{ key: string; value: string; category?: string; createdAt: string }[]>([]);
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryValue, setMemoryValue] = useState("");
+  const [memoryCategory, setMemoryCategory] = useState("context");
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
@@ -163,8 +164,8 @@ function App() {
     if (!session || !memoryKey.trim() || !memoryValue.trim()) return;
     setMemoryError(null);
     try {
-      await api.saveMemory(session.accessToken, memoryKey, memoryValue);
-      setMemoryKey(""); setMemoryValue(""); await loadMemories();
+      await api.saveMemory(session.accessToken, memoryKey, memoryValue, memoryCategory);
+      setMemoryKey(""); setMemoryValue(""); setMemoryCategory("context"); await loadMemories();
     } catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível salvar a memória."); }
   }
 
@@ -525,10 +526,11 @@ function App() {
         <div className="modal-backdrop" role="presentation">
           <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="memories-title">
             <h2 id="memories-title">Memória da IA</h2>
-            <p className="muted">A IA usa estas informações em todos os seus chats. Evite salvar senhas ou dados sensíveis.</p>
+            <p className="muted">A IA usa estas informações em todos os seus chats. Você pode editar ou apagar o que foi guardado. Evite senhas e dados sensíveis.</p>
             {memoryError && <p className="alert error">{memoryError}</p>}
-            <div className="workspace-list">{memories.map((item) => <div key={item.key}><strong>{item.key}</strong><p>{item.value}</p><button className="ghost" onClick={() => void deleteMemory(item.key)}>Apagar</button></div>)}</div>
+            <div className="workspace-list">{memories.map((item) => <div key={item.key}><strong>{item.category || "context"} · {item.key}</strong><p>{item.value}</p><button className="ghost" onClick={() => { setMemoryKey(item.key); setMemoryValue(item.value); setMemoryCategory(item.category || "context"); }}>Editar</button><button className="ghost" onClick={() => void deleteMemory(item.key)}>Apagar</button></div>)}</div>
             <label className="field"><span className="field-label">O que lembrar (ex.: idioma)</span><input value={memoryKey} onChange={(e) => setMemoryKey(e.target.value)} /></label>
+            <label className="field"><span className="field-label">Categoria</span><select value={memoryCategory} onChange={(e) => setMemoryCategory(e.target.value)}><option value="preference">Preferência</option><option value="project">Projeto</option><option value="person">Pessoa</option><option value="goal">Objetivo</option><option value="context">Contexto</option><option value="history">Histórico relevante</option></select></label>
             <label className="field"><span className="field-label">Detalhe</span><textarea value={memoryValue} onChange={(e) => setMemoryValue(e.target.value)} maxLength={2000} /></label>
             <footer><button className="ghost" onClick={() => setShowMemories(false)}>Fechar</button><button className="primary" onClick={() => void saveMemory()}>Salvar memória</button></footer>
           </section>

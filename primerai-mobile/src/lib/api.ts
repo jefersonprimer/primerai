@@ -220,7 +220,7 @@ export const api = {
     request<{ conversations: Conversation[] }>(routes.conversations, {}, token).then((r) => r.conversations),
 
   listMemories: (token: string) => request<{ memories: Memory[] }>(routes.memories, {}, token).then((r) => r.memories),
-  saveMemory: (token: string, key: string, value: string) => request<{ memory: Memory }>(routes.memory(key), { method: 'PUT', body: JSON.stringify({ value }) }, token).then((r) => r.memory),
+  saveMemory: (token: string, key: string, value: string, category = 'context') => request<{ memory: Memory }>(routes.memory(key), { method: 'PUT', body: JSON.stringify({ value, category }) }, token).then((r) => r.memory),
   deleteMemory: (token: string, key: string) => request<void>(routes.memory(key), { method: 'DELETE' }, token),
 
   createConversation: (token: string, model?: string) =>

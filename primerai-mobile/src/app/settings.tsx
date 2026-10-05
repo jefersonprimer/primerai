@@ -40,10 +40,11 @@ export default function SettingsScreen() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [memories, setMemories] = useState<
-    { key: string; value: string; createdAt: string }[]
+    { key: string; value: string; category?: string; createdAt: string }[]
   >([]);
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryValue, setMemoryValue] = useState("");
+  const [memoryCategory, setMemoryCategory] = useState("context");
   const [memoryError, setMemoryError] = useState<string | null>(null);
 
   async function refreshMemories() {
@@ -67,9 +68,10 @@ export default function SettingsScreen() {
     if (!session || !memoryKey.trim() || !memoryValue.trim()) return;
     setMemoryError(null);
     try {
-      await api.saveMemory(session.accessToken, memoryKey, memoryValue);
+      await api.saveMemory(session.accessToken, memoryKey, memoryValue, memoryCategory);
       setMemoryKey("");
       setMemoryValue("");
+      setMemoryCategory("context");
       await refreshMemories();
     } catch (err) {
       setMemoryError(
@@ -266,8 +268,7 @@ export default function SettingsScreen() {
               type="small"
               style={styles.sectionDesc}
             >
-              Estas informações são usadas em todos os seus chats. Não salve
-              senhas nem dados sensíveis.
+              Estas informações são usadas em todos os seus chats. Toque em uma memória para editá-la. Evite salvar senhas ou dados sensíveis.
             </ThemedText>
 
             {memoryError && (
@@ -281,7 +282,9 @@ export default function SettingsScreen() {
                 style={styles.card}
               >
                 <View style={styles.cardHead}>
-                  <ThemedText type="smallBold">{memory.key}</ThemedText>
+                  <Pressable onPress={() => { setMemoryKey(memory.key); setMemoryValue(memory.value); setMemoryCategory(memory.category || "context"); }}>
+                    <ThemedText type="smallBold">{memory.category || "context"} · {memory.key}</ThemedText>
+                  </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Apagar memória ${memory.key}`}
@@ -303,6 +306,14 @@ export default function SettingsScreen() {
             ))}
 
             <View style={styles.formGroup}>
+              <ThemedText themeColor="textSecondary" type="small">Categoria: {memoryCategory}</ThemedText>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {["preference", "project", "person", "goal", "context", "history"].map((category) => (
+                  <Pressable key={category} onPress={() => setMemoryCategory(category)} style={{ padding: 8, borderRadius: 8, backgroundColor: memoryCategory === category ? theme.backgroundSelected : theme.backgroundElement }}>
+                    <ThemedText type="small">{category}</ThemedText>
+                  </Pressable>
+                ))}
+              </View>
               <TextInput
                 accessibilityLabel="O que a IA deve lembrar"
                 placeholder="O que lembrar (ex.: idioma)"
@@ -550,7 +561,7 @@ const styles = StyleSheet.create({
   logoutContainer: {
     marginTop: 8,
     paddingTop: 16,
-    borderTopWidth: StyleSheet.hairlineStyle,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(150, 150, 150, 0.2)",
   },
   confirmBackdrop: {

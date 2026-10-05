@@ -59,15 +59,66 @@ As consultas devem sempre limitar os resultados ao `user_id` autenticado. Apagar
 
 ## Etapas de implementação
 
-### Etapa 1 — Memória explícita e gerenciável
+### Etapa 1 — Memória explícita e gerenciável (implementada)
 
-- Criar as tabelas `user_memories` e `conversation_summaries` via migration Drizzle.
-- Criar endpoints autenticados para listar, criar, editar e apagar memórias.
-- Adicionar uma tela de Memória nas configurações, com ações de editar e apagar.
-- Permitir salvar uma memória por solicitação explícita, como “lembre que prefiro respostas curtas”.
-- Incluir um conjunto pequeno de memórias no prompt, com limites configuráveis.
+- A tabela atual `memories` foi estendida com categoria e data de atualização via migration.
+- Endpoints autenticados permitem listar, salvar/atualizar, editar categoria/conteúdo e apagar memórias.
+- As configurações de desktop e mobile mostram categorias e permitem editar e apagar.
+- Pedidos explícitos no formato “lembre que...”, “guarde que...” e equivalentes salvam uma memória e recebem confirmação no chat.
+- As memórias são incluídas no prompt como dados de contexto, com categoria; a recuperação ainda envia todas as memórias.
 
-### Etapa 2 — Resumo de conversa
+## Próximos passos
+
+Ordem sugerida para evoluir a feature, mantendo o fluxo de chat disponível mesmo quando uma etapa de memória falhar:
+
+### 1. Tornar a memória explícita confiável
+
+- Revisar a detecção de comandos como “lembre que...” e “guarde que...”: cobrir variações em português, evitar falsos positivos e informar claramente quando um pedido não foi salvo.
+- Guardar a origem de cada memória (conversa e mensagem) e exibir essa origem e a data de atualização nas telas de memória.
+- Adicionar ação para apagar todas as memórias e opção para desativar o uso delas no chat.
+- Alinhar o formato de edição entre web, desktop e mobile; manter compatibilidade com memórias antigas sem categoria.
+- Confirmar que pedidos envolvendo senhas, tokens, chaves de API ou dados sensíveis não sejam persistidos.
+
+**Pronto quando:** a pessoa consegue criar, consultar, editar, categorizar, apagar uma memória individual ou limpar todas; a interface informa o resultado do pedido de salvamento.
+
+### 2. Recuperar apenas contexto relevante
+
+- Antes de usar embeddings, implementar uma busca textual simples sobre chave e conteúdo, com categoria como filtro opcional.
+- Limitar quantidade e tamanho do contexto recuperado; ordenar por relevância e recência.
+- Nunca consultar memórias fora do `user_id` autenticado.
+- Manter uma opção de fallback segura: se a busca falhar, o chat continua sem memória ou usa apenas um conjunto pequeno, em vez de falhar a resposta.
+- Registrar métricas sem registrar conteúdo privado, para avaliar consultas sem correspondência e tamanho do contexto.
+
+**Pronto quando:** cada pedido envia apenas memórias relacionadas, há limites previsíveis de contexto e uma falha na recuperação não impede o chat.
+
+### 3. Resumir conversas longas
+
+- Definir limites de contexto por provider/modelo e reservar espaço para a resposta.
+- Criar `conversation_summaries` com resumo e `through_message_id`; preservar mensagens originais na interface e no banco.
+- Atualizar o resumo em blocos, incluindo decisões, fatos e tarefas pendentes, sem resumir repetidamente mensagens já cobertas.
+- Se o provider não conseguir resumir, enviar mensagens recentes e seguir com o chat.
+
+**Pronto quando:** a conversa retoma decisões antigas depois de muitas mensagens, sem reenviar todo o histórico e sem ocultar o histórico original.
+
+### 4. Sugerir memórias automáticas com aprovação
+
+- Extrair candidatos de conversas sem gravá-los diretamente como fatos confirmados.
+- Apresentar ações claras para aceitar, editar ou descartar cada sugestão.
+- Se um candidato contradiz uma memória existente, sugerir atualização em vez de sobrescrevê-la.
+- Permitir desativar sugestões automáticas e identificar a origem automática/manual.
+
+**Pronto quando:** nenhuma memória inferida é persistida sem aprovação, e conflitos podem ser revisados pela pessoa.
+
+### 5. Avaliar busca semântica
+
+- Só adicionar embeddings se a busca textual não recuperar bem projetos e assuntos descritos com palavras diferentes.
+- Escolher um provider de embeddings compatível com a configuração de providers da PrimerAI, sem enviar dados a um serviço novo sem decisão de produto.
+- Avaliar pgvector na infraestrutura e manter busca textual como fallback.
+- Comparar a relevância dos resultados em consultas reais anonimizadas ou exemplos sintéticos antes de ativar por padrão.
+
+**Pronto quando:** busca semântica melhora a recuperação medida, respeita filtros de usuário e categoria, e pode ser desativada sem perda das memórias.
+
+## Etapa 2 — Resumo de conversa (planejada)
 
 - Definir um orçamento de contexto conservador por provider/modelo.
 - Resumir mensagens antigas quando o orçamento for excedido, preservando as mensagens originais.

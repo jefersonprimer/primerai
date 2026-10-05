@@ -339,8 +339,10 @@ export const memories = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     value: jsonb("value").$type<unknown>().notNull(),
+    category: text("category").notNull().default("context"),
     sourceTaskId: uuid("source_task_id").references(() => tasks.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("memories_user_key_idx").on(t.userId, t.key)],
 );

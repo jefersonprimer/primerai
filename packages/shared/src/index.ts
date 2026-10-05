@@ -3,7 +3,7 @@ export * from "./conversations";
 export * from "./tasks";
 export * from "./tools";
 
-export type Memory = { key: string; value: string; createdAt: string };
+export type Memory = { key: string; value: string; category?: string; createdAt: string; updatedAt?: string };
 
 export const API_PREFIX = "/v1";
 

@@ -31,6 +31,15 @@ recebem sufixos numéricos quando necessário para não sobrescrever arquivos ex
 Esse fluxo é específico para resumo de PDFs; o agent loop genérico, pairing por código, aprovações
 e sincronização de artefatos ainda não estão implementados.
 
+O desktop também já atende tarefas de organização de arquivos recebidas pelo fluxo remoto: gera uma
+prévia para organizar arquivos diretamente na pasta autorizada por tipo (documentos, imagens,
+planilhas, vídeos e outros) e só move depois da aprovação no desktop ou pelo celular em **Tarefas**.
+A organização considera arquivos diretamente na pasta escolhida. A prévia também mostra grupos de
+duplicados, sem apagá-los; após organizar, o desktop oferece desfazer enquanto continua aberto.
+Automação de sites e exclusão de duplicados ainda não estão incluídas. Veja [`docs/faca-por-mim.md`](./docs/faca-por-mim.md).
+
+O chat também tem um MVP de pesquisa aprofundada para recomendações de notebooks: busca ofertas e análises, tenta ler páginas públicas e pede ao modelo uma comparação com critérios, limitações e fontes. Preços dependem das páginas coletadas e podem mudar; ainda não há tabela/cartões de ofertas validados nem acompanhamento de preço. Detalhes em [`docs/pesquisa-profunda-com-recomendacao.md`](./docs/pesquisa-profunda-com-recomendacao.md).
+
 ## Requisitos
 
 - Node 22+

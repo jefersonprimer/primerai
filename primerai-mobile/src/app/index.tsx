@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
@@ -35,16 +35,22 @@ import {
   Image as ImageIcon,
   Laptop,
   Menu,
+  Mic,
+  MicOff,
   MoreVertical,
   Pin,
   Plus,
   Search,
   Share2,
+  Sparkles,
   SquarePen,
   TextSelect,
   Trash2,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react-native";
+import * as Speech from "expo-speech";
 import * as Clipboard from "expo-clipboard";
 import {
   BottomSheetBackdrop,
@@ -56,9 +62,10 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import type { ChatMessage, Conversation } from "@primerai/shared";
+import { TransformationTargetLabels, type ChatMessage, type Conversation, type TransformationTarget } from "@primerai/shared";
 
 import { ModelPicker } from "@/components/model-picker";
+import { ImagePdfCreator } from "@/components/image-pdf-creator";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { MaxContentWidth, Spacing } from "@/constants/theme";
@@ -69,6 +76,15 @@ import { useSession } from "@/state/session";
 /** o input cresce com o texto até este teto, em px */
 const COMPOSER_MAX_HEIGHT = 160;
 let anonymousMessageSequence = 0;
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
 type Attachment = {
   name: string;
   text?: string;
@@ -112,6 +128,7 @@ export default function AgentScreen() {
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [pdfCreatorOpen, setPdfCreatorOpen] = useState(false);
   const [taskDevicePickerOpen, setTaskDevicePickerOpen] = useState(false);
   const [pcTaskMode, setPcTaskMode] = useState(false);
   const [onlineTaskDevices, setOnlineTaskDevices] = useState<RemoteDevice[]>(
@@ -126,6 +143,7 @@ export default function AgentScreen() {
   const plusButtonRef = useRef<View>(null);
   const previousActiveIdRef = useRef<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -133,6 +151,9 @@ export default function AgentScreen() {
   const renameInputRef = useRef<TextInput>(null);
   const [messageActionsTarget, setMessageActionsTarget] =
     useState<ChatMessage | null>(null);
+  const [transformSource, setTransformSource] = useState<ChatMessage | null>(null);
+  const [transformInstructions, setTransformInstructions] = useState("");
+  const [transformBusy, setTransformBusy] = useState(false);
   const [messageActionsPosition, setMessageActionsPosition] = useState<{
     top: number;
     right: number;
@@ -391,6 +412,7 @@ export default function AgentScreen() {
             conversationId: "anonymous",
             role: "user",
             content,
+            parts: [],
             createdAt: now,
           },
           {
@@ -398,6 +420,7 @@ export default function AgentScreen() {
             conversationId: "anonymous",
             role: "assistant",
             content: result.answer,
+            parts: [],
             createdAt: now,
           },
         ]);
@@ -430,9 +453,105 @@ export default function AgentScreen() {
     setMessageActionsTarget(null);
   }
 
+  async function transformMessage(target: TransformationTarget) {
+    if (!transformSource || !accessToken || !activeId || transformBusy) return;
+    const source = transformSource.content;
+    const label = TransformationTargetLabels[target];
+    const content = `Transformar em ${label}`;
+    setTransformBusy(true);
+    setError(null);
+    try {
+      const saved = await api.sendMessage(accessToken, activeId, content, undefined, {
+        target,
+        source,
+        ...(transformInstructions.trim() ? { instructions: transformInstructions.trim() } : {}),
+      });
+      setMessages((current) => [...current, ...saved]);
+      setConversations(await api.listConversations(accessToken));
+      setTransformSource(null);
+      setTransformInstructions("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "não foi possível transformar o conteúdo");
+    } finally {
+      setTransformBusy(false);
+    }
+  }
+
   async function shareMessage(message: ChatMessage) {
     await Share.share({ message: message.content });
   }
+
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      void Speech.stop();
+    };
+  }, []);
+
+  async function toggleSpeakMessage(message: ChatMessage) {
+    try {
+      if (speakingId === message.id) {
+        await Speech.stop();
+        setSpeakingId(null);
+        return;
+      }
+      await Speech.stop();
+      setSpeakingId(message.id);
+      Speech.speak(message.content, {
+        language: "pt-BR",
+        onDone: () => setSpeakingId(null),
+        onStopped: () => setSpeakingId(null),
+        onError: () => setSpeakingId(null),
+      });
+    } catch {
+      setSpeakingId(null);
+    }
+  }
+
+  const toggleMobileMic = useCallback(() => {
+    if (isListening) {
+      if (typeof window !== "undefined" && (window as unknown as { __speechRecognition?: { stop: () => void } }).__speechRecognition) {
+        try {
+          (window as unknown as { __speechRecognition?: { stop: () => void } }).__speechRecognition?.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsListening(false);
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const SpeechRecognition =
+        (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
+        (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const rec = new SpeechRecognition();
+          rec.lang = "pt-BR";
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.onstart = () => setIsListening(true);
+          rec.onresult = (e: any) => {
+            let t = "";
+            for (let i = 0; i < e.results.length; i++) {
+              t += e.results[i][0].transcript;
+            }
+            if (t.trim()) setDraft(t.trim());
+          };
+          rec.onerror = () => setIsListening(false);
+          rec.onend = () => setIsListening(false);
+          (window as unknown as { __speechRecognition?: any }).__speechRecognition = rec;
+          rec.start();
+          return;
+        } catch {
+          // fallback
+        }
+      }
+    }
+    setIsListening((prev) => !prev);
+  }, [isListening]);
 
   function editMessage(message: ChatMessage) {
     setDraft(message.content);
@@ -604,10 +723,12 @@ export default function AgentScreen() {
       const picked = await Promise.all(
         result.assets.map(async (asset) => {
           const ext = asset.name.split(".").pop()?.toLowerCase();
-          if (asset.mimeType === "application/pdf" || ext === "pdf")
-            throw new Error(
-              "PDF ainda não pode ser lido neste chat. Anexe arquivos de texto, CSV ou JSON.",
-            );
+          if (asset.mimeType === "application/pdf" || ext === "pdf") {
+            if ((asset.size ?? 0) > 5 * 1024 * 1024)
+              throw new Error(`${asset.name} ultrapassa o limite de 5 MB.`);
+            const data = arrayBufferToBase64(await new File(asset.uri).arrayBuffer());
+            return await api.extractPdf(session!.accessToken, asset.name, data);
+          }
           if (
             !/^(text\/|application\/(json|xml))/.test(asset.mimeType ?? "") &&
             !/\.(txt|md|csv|json|xml)$/i.test(asset.name)
@@ -804,7 +925,7 @@ export default function AgentScreen() {
                     if (message.role !== "user") return;
                     messageRefs.current[message.id]?.measureInWindow(
                       (x, y, width, height) => {
-                        const menuHeight = 3 * 48 + 12;
+                        const menuHeight = (anonymous || !activeId ? 3 : 4) * 48 + 12;
                         const below = y + height + 6;
                         setMessageActionsPosition({
                           top:
@@ -837,9 +958,6 @@ export default function AgentScreen() {
                       : styles.assistantMessage,
                   ]}
                 >
-                  <ThemedText type="smallBold">
-                    {message.role === "user" ? "Você" : "IA"}
-                  </ThemedText>
                   <ThemedText
                     style={styles.messageContent}
                   >
@@ -855,6 +973,19 @@ export default function AgentScreen() {
                         onPress={() => void copyMessage(message)}
                       >
                         <Copy size={18} color="#aeb7c8" />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={speakingId === message.id ? "Parar áudio" : "Ouvir resposta em voz alta"}
+                        hitSlop={8}
+                        style={styles.assistantMessageAction}
+                        onPress={() => void toggleSpeakMessage(message)}
+                      >
+                        {speakingId === message.id ? (
+                          <VolumeX size={18} color="#ef4444" />
+                        ) : (
+                          <Volume2 size={18} color="#aeb7c8" />
+                        )}
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
@@ -926,8 +1057,67 @@ export default function AgentScreen() {
                     <SquarePen size={20} color="#e6e9ef" />
                     <ThemedText>Editar mensagem</ThemedText>
                   </Pressable>
+                  {!anonymous && activeId && (
+                    <Pressable
+                      accessibilityRole="button"
+                      style={styles.messageAction}
+                      onPress={() => {
+                        setTransformSource(messageActionsTarget);
+                        setMessageActionsTarget(null);
+                      }}
+                    >
+                      <Sparkles size={20} color="#e6e9ef" />
+                      <ThemedText>Transformar</ThemedText>
+                    </Pressable>
+                  )}
                 </ThemedView>
               )}
+            </View>
+          </Modal>
+
+          <Modal
+            visible={!!transformSource}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setTransformSource(null)}
+          >
+            <View style={styles.transformBackdrop}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => setTransformSource(null)} />
+              <ThemedView type="backgroundElement" style={styles.transformSheet}>
+                <View style={styles.transformHeader}>
+                  <View style={styles.transformTitleRow}>
+                    <Sparkles size={20} color="#d9c5ff" />
+                    <ThemedText type="subtitle">Transformar em</ThemedText>
+                  </View>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Fechar" onPress={() => setTransformSource(null)}>
+                    <X size={20} color="#aeb7c8" />
+                  </Pressable>
+                </View>
+                <ThemedText themeColor="textSecondary" type="small">Escolha um formato para esta mensagem.</ThemedText>
+                <TextInput
+                  value={transformInstructions}
+                  onChangeText={setTransformInstructions}
+                  placeholder="Orientação opcional: tom, público, tamanho…"
+                  placeholderTextColor="#8b94a5"
+                  multiline
+                  maxLength={2000}
+                  style={styles.transformInput}
+                />
+                <View style={styles.transformOptions}>
+                  {(Object.entries(TransformationTargetLabels) as [TransformationTarget, string][]).map(([target, label]) => (
+                    <Pressable
+                      key={target}
+                      accessibilityRole="button"
+                      disabled={transformBusy}
+                      style={[styles.transformOption, transformBusy && styles.sendDisabled]}
+                      onPress={() => void transformMessage(target)}
+                    >
+                      <ThemedText>{label}</ThemedText>
+                      {transformBusy && <ActivityIndicator size="small" />}
+                    </Pressable>
+                  ))}
+                </View>
+              </ThemedView>
             </View>
           </Modal>
 
@@ -1104,11 +1294,7 @@ export default function AgentScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Modelo: ${modelLabel}`}
-                disabled={!modelProvider}
-                style={[
-                  styles.modelButton,
-                  !modelProvider && styles.sendDisabled,
-                ]}
+                style={styles.modelButton}
                 onPress={() => setModelPickerOpen(true)}
               >
                 <ThemedText
@@ -1119,6 +1305,19 @@ export default function AgentScreen() {
                   {modelLabel}
                 </ThemedText>
                 <ChevronDown size={16} color="#8b94a5" />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={isListening ? "Parar de ouvir" : "Falar mensagem por voz"}
+                hitSlop={8}
+                style={[styles.micButton, isListening && styles.micActiveButton]}
+                onPress={toggleMobileMic}
+              >
+                {isListening ? (
+                  <MicOff size={19} color="#ef4444" />
+                ) : (
+                  <Mic size={19} color="#e6e9ef" />
+                )}
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -1231,6 +1430,45 @@ export default function AgentScreen() {
                 </Pressable>
                 <Pressable
                   style={styles.attachmentOption}
+                  onPress={() => {
+                    setAttachmentMenuOpen(false);
+                    setPdfCreatorOpen(true);
+                  }}
+                >
+                  <View style={styles.attachmentOptionIcon}>
+                    <FileText size={24} color="#c8d2e8" />
+                  </View>
+                  <View>
+                    <ThemedText style={styles.attachmentOptionLabel}>
+                      Fotos para PDF
+                    </ThemedText>
+                    <ThemedText themeColor="textSecondary" type="small">
+                      Crie e compartilhe sem enviar as fotos
+                    </ThemedText>
+                  </View>
+                </Pressable>
+                <Pressable
+                  style={styles.attachmentOption}
+                  onPress={() => {
+                    setAttachmentMenuOpen(false);
+                    // Expo Router atualiza esta união de caminhos ao iniciar o bundler.
+                    router.push("/meeting" as never);
+                  }}
+                >
+                  <View style={styles.attachmentOptionIcon}>
+                    <FileText size={24} color="#c8d2e8" />
+                  </View>
+                  <View>
+                    <ThemedText style={styles.attachmentOptionLabel}>
+                      Reunião inteligente
+                    </ThemedText>
+                    <ThemedText themeColor="textSecondary" type="small">
+                      Gere resumo e tarefas da transcrição
+                    </ThemedText>
+                  </View>
+                </Pressable>
+                <Pressable
+                  style={styles.attachmentOption}
                   disabled={taskBusy}
                   onPress={() => {
                     setAttachmentMenuOpen(false);
@@ -1250,6 +1488,11 @@ export default function AgentScreen() {
             </ThemedView>
           </View>
         </Modal>
+
+        <ImagePdfCreator
+          visible={pdfCreatorOpen}
+          onClose={() => setPdfCreatorOpen(false)}
+        />
 
         <Modal
           visible={taskDevicePickerOpen}
@@ -1765,7 +2008,12 @@ const styles = StyleSheet.create({
   welcomeCopy: { textAlign: "center", lineHeight: 21 },
   message: { maxWidth: "90%", padding: 12, borderRadius: 14, gap: 5 },
   userMessage: { alignSelf: "flex-end", backgroundColor: "#243050" },
-  assistantMessage: { alignSelf: "flex-start", backgroundColor: "#161a22" },
+  assistantMessage: {
+    alignSelf: "stretch",
+    width: "100%",
+    maxWidth: "100%",
+    backgroundColor: "transparent",
+  },
   messageContent: { lineHeight: 21 },
   textSelectionScreen: { flex: 1, backgroundColor: "#0d1017" },
   textSelectionHeader: {
@@ -1823,6 +2071,49 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     paddingHorizontal: 10,
+  },
+  transformBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 20,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  transformSheet: {
+    width: "100%",
+    maxWidth: 480,
+    alignSelf: "center",
+    padding: 18,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#343a47",
+    gap: 14,
+  },
+  transformHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  transformTitleRow: { flexDirection: "row", alignItems: "center", gap: 9 },
+  transformInput: {
+    minHeight: 54,
+    maxHeight: 100,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#424959",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#f2f5ff",
+    textAlignVertical: "top",
+  },
+  transformOptions: { gap: 6 },
+  transformOption: {
+    minHeight: 42,
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#272d3d",
   },
   composer: {
     gap: Spacing.two,
@@ -1921,13 +2212,26 @@ const styles = StyleSheet.create({
     maxWidth: "65%",
   },
   modelLabel: { flexShrink: 1 },
-  sendButton: {
+  micButton: {
     width: 38,
     height: 38,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
     marginLeft: "auto",
+    backgroundColor: "#272d3d",
+  },
+  micActiveButton: {
+    backgroundColor: "rgba(239, 68, 68, 0.2)",
+    borderColor: "#ef4444",
+    borderWidth: 1,
+  },
+  sendButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#6f8cff",
   },
   sendDisabled: { opacity: 0.45 },

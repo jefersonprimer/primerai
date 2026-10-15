@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { api, type RemoteTask, type RemoteTaskStatus } from '@/lib/api';
+import { api, type RemoteApproval, type RemoteTask, type RemoteTaskStatus } from '@/lib/api';
 import { useSession } from '@/state/session';
 
 /** o desktop só renomeia os status para texto legível na lista */
@@ -42,6 +42,7 @@ export default function RemoteScreen() {
   const accessToken = session?.accessToken;
 
   const [tasks, setTasks] = useState<RemoteTask[]>([]);
+  const [approvals, setApprovals] = useState<Record<string, RemoteApproval>>({});
   const [taskActionId, setTaskActionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +59,9 @@ export default function RemoteScreen() {
           const recent = await api.listTasks(token);
           if (cancelled) return;
           setTasks(recent);
+          const pending = recent.filter((task) => task.status === 'waiting_approval');
+          const entries = await Promise.all(pending.map(async (task) => [task.id, await api.getTaskApproval(token, task.id)] as const));
+          if (!cancelled) setApprovals(Object.fromEntries(entries));
         } catch (err) {
           if (!cancelled) setError(err instanceof Error ? err.message : 'não foi possível falar com o servidor');
         } finally {
@@ -97,6 +101,21 @@ export default function RemoteScreen() {
       setTasks((current) => current.filter((item) => item.id !== task.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'não foi possível apagar a tarefa');
+    } finally {
+      setTaskActionId(null);
+    }
+  }
+
+  async function decideApproval(task: RemoteTask, approved: boolean) {
+    const approval = approvals[task.id];
+    if (!accessToken || !approval || taskActionId) return;
+    setTaskActionId(task.id);
+    setError(null);
+    try {
+      await api.resolveApproval(accessToken, approval.id, approved);
+      setApprovals((current) => { const next = { ...current }; delete next[task.id]; return next; });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'não foi possível decidir a aprovação');
     } finally {
       setTaskActionId(null);
     }
@@ -143,6 +162,16 @@ export default function RemoteScreen() {
                   <ThemedText themeColor="textSecondary" type="small">
                     {task.stepLabel}
                   </ThemedText>
+                )}
+                {task.status === 'waiting_approval' && approvals[task.id] && (
+                  <View style={styles.approvalBox}>
+                    <ThemedText type="smallBold">Confirme a movimentação</ThemedText>
+                    <ThemedText themeColor="textSecondary" type="small">{approvals[task.id].impactSummary}</ThemedText>
+                    <View style={styles.approvalActions}>
+                      <Pressable accessibilityRole="button" disabled={taskActionId !== null} style={styles.approveButton} onPress={() => void decideApproval(task, true)}><ThemedText style={styles.approveLabel}>{taskActionId === task.id ? 'Enviando…' : 'Aprovar'}</ThemedText></Pressable>
+                      <Pressable accessibilityRole="button" disabled={taskActionId !== null} style={styles.denyButton} onPress={() => void decideApproval(task, false)}><ThemedText style={styles.denyLabel}>Recusar</ThemedText></Pressable>
+                    </View>
+                  </View>
                 )}
                 {task.output?.text && <ThemedText style={styles.taskOutput}>{task.output.text}</ThemedText>}
                 {task.error && <ThemedText style={styles.taskError}>{task.error}</ThemedText>}
@@ -210,6 +239,12 @@ const styles = StyleSheet.create({
   taskPrompt: { flex: 1 },
   taskOutput: { lineHeight: 21 },
   taskError: { color: '#f85149' },
+  approvalBox: { gap: 8, padding: 10, borderRadius: 9, backgroundColor: '#383124' },
+  approvalActions: { flexDirection: 'row', gap: 8 },
+  approveButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#28563b' },
+  approveLabel: { color: '#c9f6d5', fontWeight: '700' },
+  denyButton: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#382927' },
+  denyLabel: { color: '#ffb4ab', fontWeight: '700' },
   taskActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 },
   cancelTaskButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9, backgroundColor: '#383124' },
   cancelTaskLabel: { color: '#f0c36a', fontWeight: '600' },

@@ -1,0 +1,5 @@
+/* App.css in components so Tailwind utilities win over global button/input styles. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./App.css" layer(components);

@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { CreateTaskSchema } from "@primerai/shared";
-import { devices, tasks, workspaces } from "../db/schema.js";
+import { approvals, devices, tasks, workspaces } from "../db/schema.js";
 
 /** REST transport for desktop workers. The desktop remains the only process that touches user files. */
 export async function taskRoutes(app: FastifyInstance) {
@@ -65,6 +65,68 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get("/v1/tasks", pre, async (req) => {
     const rows = await db.select().from(tasks).where(eq(tasks.userId, app.requireUser(req).id)).orderBy(desc(tasks.createdAt)).limit(100);
     return { tasks: rows };
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/tasks/:id", pre, async (req, reply) => {
+    const [task] = await db.select().from(tasks).where(and(
+      eq(tasks.id, req.params.id), eq(tasks.userId, app.requireUser(req).id),
+    )).limit(1);
+    if (!task) return reply.code(404).send({ error: { code: "not_found", message: "tarefa não encontrada" } });
+    return { task };
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/tasks/:id/approval", pre, async (req, reply) => {
+    const parsed = z.object({
+      tool: z.literal("fs.move_file"),
+      arguments: z.object({ directory: z.string().min(1).max(2_000), count: z.number().int().min(1).max(300) }),
+      impactSummary: z.string().min(1).max(500),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: "invalid_body", message: parsed.error.message } });
+    const userId = app.requireUser(req).id;
+    const [task] = await db.update(tasks).set({ status: "waiting_approval", stepLabel: "Aguardando aprovação para mover arquivos" }).where(and(
+      eq(tasks.id, req.params.id), eq(tasks.userId, userId), eq(tasks.status, "running"),
+    )).returning({ id: tasks.id });
+    if (!task) return reply.code(409).send({ error: { code: "task_not_active", message: "a tarefa não está pronta para aprovação" } });
+    const [approval] = await db.insert(approvals).values({
+      taskId: task.id,
+      tool: parsed.data.tool,
+      args: parsed.data.arguments,
+      risk: "confirm",
+      impactSummary: parsed.data.impactSummary,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    }).returning();
+    return { approval };
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/tasks/:id/approval", pre, async (req, reply) => {
+    const userId = app.requireUser(req).id;
+    const [task] = await db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.id, req.params.id), eq(tasks.userId, userId))).limit(1);
+    if (!task) return reply.code(404).send({ error: { code: "not_found", message: "tarefa não encontrada" } });
+    const [approval] = await db.select().from(approvals).where(eq(approvals.taskId, task.id)).orderBy(desc(approvals.createdAt)).limit(1);
+    if (!approval) return reply.code(404).send({ error: { code: "not_found", message: "aprovação não encontrada" } });
+    if (approval.status === "pending" && approval.expiresAt.getTime() <= Date.now()) {
+      const [expired] = await db.update(approvals).set({ status: "expired", resolvedAt: new Date() }).where(and(eq(approvals.id, approval.id), eq(approvals.status, "pending"))).returning();
+      if (expired) await db.update(tasks).set({ status: "cancelled", stepLabel: null, finishedAt: new Date() }).where(and(eq(tasks.id, task.id), eq(tasks.status, "waiting_approval")));
+      return { approval: expired ?? { ...approval, status: "expired", resolvedAt: new Date() } };
+    }
+    return { approval };
+  });
+
+  app.post<{ Params: { id: string; decision: string } }>("/v1/approvals/:id/:decision", pre, async (req, reply) => {
+    const decision = req.params.decision === "approve" ? "approved" : req.params.decision === "deny" ? "denied" : null;
+    if (!decision) return reply.code(404).send({ error: { code: "not_found", message: "ação de aprovação inválida" } });
+    const [approval] = await db.select().from(approvals).where(eq(approvals.id, req.params.id)).limit(1);
+    if (!approval) return reply.code(404).send({ error: { code: "not_found", message: "aprovação não encontrada" } });
+    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, approval.taskId), eq(tasks.userId, app.requireUser(req).id))).limit(1);
+    if (!task) return reply.code(404).send({ error: { code: "not_found", message: "aprovação não encontrada" } });
+    if (approval.expiresAt.getTime() <= Date.now()) return reply.code(409).send({ error: { code: "approval_expired", message: "a aprovação expirou" } });
+    const [resolved] = await db.update(approvals).set({ status: decision, resolvedAt: new Date() }).where(and(eq(approvals.id, approval.id), eq(approvals.status, "pending"))).returning();
+    if (!resolved) return reply.code(409).send({ error: { code: "approval_resolved", message: "a aprovação já foi decidida" } });
+    await db.update(tasks).set(decision === "approved"
+      ? { status: "running", stepLabel: "Aprovação recebida; aguardando desktop" }
+      : { status: "cancelled", stepLabel: null, finishedAt: new Date() },
+    ).where(and(eq(tasks.id, task.id), eq(tasks.status, "waiting_approval")));
+    return { approval: resolved };
   });
 
   app.post<{ Params: { id: string } }>("/v1/tasks/:id/cancel", pre, async (req, reply) => {

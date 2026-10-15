@@ -1,4 +1,4 @@
-import { getProviderEntry, type AIModel, type ProviderErrorCode, type ProviderId } from "@primerai/shared";
+import { getProviderEntry, type AIModel, type ModelCapabilities, type ProviderErrorCode, type ProviderId } from "@primerai/shared";
 import { redact } from "../lib/crypto.js";
 
 export interface ProviderCtx {
@@ -26,6 +26,25 @@ export interface AIProviderAdapter {
   readonly openAiCompatible: boolean;
   validate(ctx: ProviderCtx): Promise<ValidateResult>;
   listModels(ctx: ProviderCtx): Promise<AIModel[]>;
+}
+
+export function modelCapabilities(provider: ProviderId, model: string, supportsTools = true): ModelCapabilities {
+  const name = model.toLowerCase();
+  const textOnly = /embedding|whisper|tts|moderation|dall-e/.test(name);
+  const image = !textOnly && (
+    provider === "google" ||
+    /gpt-4(?:o|\.1)|gpt-5|o[134]|claude|gemini|qwen.*vl|llava|vision|pixtral|minicpm-v/.test(name)
+  );
+  const audioInput: "none" | "transcription" | "native" = !textOnly && (
+    (provider === "google" && /gemini/.test(name)) ||
+    /gpt-4o-audio|gemini/.test(name)
+  ) ? "native" : "none";
+  return {
+    input: { text: true, image, audio: audioInput, video: "none", files: "none" },
+    output: { text: true, audio: "none" },
+    realtime: false,
+    tools: supportsTools,
+  };
 }
 
 const TIMEOUT_MS = 20_000;
@@ -126,6 +145,15 @@ function mapStatus(status: number, json: unknown, text: string, providerLabel: s
     return new ProviderError("rate_limited", `${providerLabel} pediu rate limit, tente em instantes`, status);
   }
 
+  // o Google devolve 400 (não 401) quando a chave é inválida
+  if (status === 400 && /api key not valid|API_KEY_INVALID/i.test(`${text} ${detail}`)) {
+    return new ProviderError(
+      "invalid_key",
+      `chave inválida ou expirada no ${providerLabel} (${detail})`,
+      status,
+    );
+  }
+
   if (status >= 500) {
     return new ProviderError("network_error", `${providerLabel} está indisponível (HTTP ${status})`, status);
   }
@@ -175,6 +203,7 @@ const openai: AIProviderAdapter = {
         contextWindow: null,
         supportsTools: !/embedding|whisper|tts|moderation|audio|realtime|dall-e|image/i.test(m.id),
         isFree: false,
+        capabilities: modelCapabilities("openai", m.id, !/embedding|whisper|tts|moderation|audio|realtime|dall-e|image/i.test(m.id)),
       }));
   },
 };
@@ -201,17 +230,17 @@ const google: AIProviderAdapter = {
       ?.models ?? [];
 
     return models
-      .filter((m): m is { name: string; displayName?: string; inputTokenLimit?: number } =>
-        typeof m.name === "string",
-      )
+      // o campo `name` vem como "models/gemini-2.5-flash": o id guardado é sem o prefixo
+      .flatMap((m) => (typeof m.name === "string" ? [{ ...m, id: m.name.replace(/^models\//, "") }] : []))
       // só os que servem pra chat, sem tuning/embedding/file-api
-      .filter((m) => /\/models\/(gemini|learnlm)/.test(m.name))
+      .filter((m) => /^(gemini|learnlm)/.test(m.id))
       .map((m) => ({
-        id: m.name.replace(/^models\//, ""),
-        label: m.displayName ?? m.name.replace(/^models\//, ""),
+        id: m.id,
+        label: m.displayName ?? m.id,
         contextWindow: m.inputTokenLimit ?? null,
-        supportsTools: /gemini/.test(m.name),
+        supportsTools: /gemini/.test(m.id),
         isFree: false,
+        capabilities: modelCapabilities("google", m.id, /gemini/.test(m.id)),
       }));
   },
 };
@@ -287,6 +316,7 @@ const openrouter: AIProviderAdapter = {
           Number(m.pricing.prompt) === 0 &&
           typeof m.pricing?.completion === "string" &&
           Number(m.pricing.completion) === 0,
+        capabilities: modelCapabilities("openrouter", m.id, m.tools.includes("tools")),
       }))
       // A rota limita a resposta a 300 modelos; prioriza os gratuitos para
       // que eles não desapareçam atrás do corte alfabético.
@@ -322,7 +352,7 @@ const ollama: AIProviderAdapter = {
     return models
       .map((m) => m.name ?? m.model)
       .filter((n): n is string => typeof n === "string")
-      .map((n) => ({ id: n, label: n, contextWindow: null, supportsTools: true, isFree: true }));
+      .map((n) => ({ id: n, label: n, contextWindow: null, supportsTools: true, isFree: true, capabilities: modelCapabilities("ollama", n) }));
   },
 };
 

@@ -19,6 +19,12 @@ export const TOOL_NAMES = [
   "app.open",
   "shell.execute",
   "project.scaffold",
+  "mobile.prepare_images",
+  "mobile.create_image_pdf",
+  "mobile.extract_document_data",
+  "mobile.capture_screen",
+  "mobile.share_file",
+  "mobile.save_file",
 ] as const;
 export const ToolNameSchema = z.enum(TOOL_NAMES);
 export type ToolName = z.infer<typeof ToolNameSchema>;
@@ -32,6 +38,54 @@ export const ToolSpecSchema = z.object({
 export type ToolSpec = z.infer<typeof ToolSpecSchema>;
 
 export const TOOL_CATALOG: readonly ToolSpec[] = [
+  {
+    name: "mobile.prepare_images",
+    description: "Prepara imagens temporárias autorizadas para uma tarefa mobile, corrigindo orientação e gerando miniaturas.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: { uris: { type: "array", items: { type: "string" }, maxItems: 12 } },
+      required: ["uris"],
+    },
+  },
+  {
+    name: "mobile.create_image_pdf",
+    description: "Cria localmente um PDF de imagens temporárias ordenadas. Não envia as imagens ao backend.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: { uris: { type: "array", items: { type: "string" }, maxItems: 12 }, fileName: { type: "string" } },
+      required: ["uris"],
+    },
+  },
+  {
+    name: "mobile.extract_document_data",
+    description: "Extrai dados estruturados de um documento fornecido pela pessoa. Dados de pagamento exigem conferência humana.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: { uris: { type: "array", items: { type: "string" }, maxItems: 12 }, documentType: { type: "string" } },
+      required: ["uris"],
+    },
+  },
+  {
+    name: "mobile.capture_screen",
+    description: "Solicita uma captura de tela pelas permissões nativas do sistema.",
+    risk: "confirm",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "mobile.share_file",
+    description: "Abre o seletor nativo para compartilhar um arquivo temporário gerado pela tarefa.",
+    risk: "confirm",
+    parameters: { type: "object", properties: { uri: { type: "string" }, mimeType: { type: "string" } }, required: ["uri"] },
+  },
+  {
+    name: "mobile.save_file",
+    description: "Solicita que a pessoa escolha onde salvar um arquivo gerado fora da área privada do app.",
+    risk: "confirm",
+    parameters: { type: "object", properties: { uri: { type: "string" }, fileName: { type: "string" } }, required: ["uri"] },
+  },
   {
     name: "fs.list_directory",
     description: "Lista o conteúdo de um diretório dentro de um workspace autorizado.",

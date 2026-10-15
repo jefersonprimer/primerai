@@ -56,6 +56,27 @@ export const users = pgTable("users", {
   ...timestamps,
 });
 
+export const notionIntegrations = pgTable("notion_integrations", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  accessTokenEnc: text("access_token_enc").notNull(),
+  workspaceId: text("workspace_id"),
+  workspaceName: text("workspace_name"),
+  botId: text("bot_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Credenciais OAuth do Google Calendar — tokens nunca saem cifrados do backend. */
+export const calendarIntegrations = pgTable("calendar_integrations", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  accessTokenEnc: text("access_token_enc").notNull(),
+  refreshTokenEnc: text("refresh_token_enc"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  calendarId: text("calendar_id").notNull().default("primary"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -137,6 +158,37 @@ export const chatMessages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("chat_messages_conversation_created_idx").on(t.conversationId, t.createdAt)],
+);
+
+export const chatAttachments = pgTable(
+  "chat_attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull().unique(),
+    mimeType: text("mime_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    originalName: text("original_name").notNull(),
+    status: text("status").notNull().default("ready"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_attachments_user_idx").on(t.userId), index("chat_attachments_conversation_idx").on(t.conversationId)],
+);
+
+export const chatMessageParts = pgTable(
+  "chat_message_parts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id").notNull().references(() => chatMessages.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    type: text("type").notNull(),
+    text: text("text"),
+    attachmentId: uuid("attachment_id").references(() => chatAttachments.id, { onDelete: "set null" }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  },
+  (t) => [index("chat_message_parts_message_idx").on(t.messageId), uniqueIndex("chat_message_parts_position_idx").on(t.messageId, t.position)],
 );
 
 export const devices = pgTable(
@@ -329,6 +381,20 @@ export const auditLog = pgTable(
   (t) => [index("audit_log_user_idx").on(t.userId, t.createdAt)],
 );
 
+/** Fichas de projetos que dão estrutura às memórias relacionadas. */
+export const projectProfiles = pgTable("project_profiles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  objective: text("objective"),
+  stack: jsonb("stack").$type<string[]>().notNull().default([]),
+  decisions: jsonb("decisions").$type<string[]>().notNull().default([]),
+  status: text("status").notNull().default("active"),
+  lastConfirmedAt: timestamp("last_confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("project_profiles_user_name_idx").on(t.userId, t.name)]);
+
 /** Preferências e fatos que a IA deve lembrar entre conversas. */
 export const memories = pgTable(
   "memories",
@@ -340,12 +406,37 @@ export const memories = pgTable(
     key: text("key").notNull(),
     value: jsonb("value").$type<unknown>().notNull(),
     category: text("category").notNull().default("context"),
+    origin: text("origin").notNull().default("manual"),
+    sourceConversationId: uuid("source_conversation_id").references(() => conversations.id, { onDelete: "set null" }),
+    sourceMessageId: uuid("source_message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+    projectId: uuid("project_id").references(() => projectProfiles.id, { onDelete: "set null" }),
+    validUntil: timestamp("valid_until", { withTimezone: true }),
     sourceTaskId: uuid("source_task_id").references(() => tasks.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("memories_user_key_idx").on(t.userId, t.key)],
 );
+
+export const memorySettings = pgTable("memory_settings", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  useMemoriesInChat: boolean("use_memories_in_chat").notNull().default(true),
+  automaticSuggestionsEnabled: boolean("automatic_suggestions_enabled").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const memorySuggestions = pgTable("memory_suggestions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  key: text("key").notNull(),
+  value: text("value").notNull(),
+  category: text("category").notNull().default("context"),
+  sourceConversationId: uuid("source_conversation_id").references(() => conversations.id, { onDelete: "set null" }),
+  sourceMessageId: uuid("source_message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+}, (t) => [index("memory_suggestions_user_status_idx").on(t.userId, t.status, t.createdAt)]);
 
 /** Fase futura: automações (cron) */
 export const schedules = pgTable(
@@ -366,6 +457,69 @@ export const schedules = pgTable(
   },
   (t) => [index("schedules_user_idx").on(t.userId)],
 );
+
+export const automations = pgTable("automations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  deviceId: uuid("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  name: text("name").notNull(), prompt: text("prompt").notNull(),
+  frequency: text("frequency").notNull(), time: text("time").notNull(),
+  weekday: smallint("weekday"), timezone: text("timezone").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("automations_due_idx").on(t.enabled, t.nextRunAt), index("automations_user_idx").on(t.userId)]);
+
+export const automationRuns = pgTable("automation_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  automationId: uuid("automation_id").notNull().references(() => automations.id, { onDelete: "cascade" }),
+  taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  status: text("status").notNull().default("queued"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("automation_runs_occurrence_idx").on(t.automationId, t.scheduledFor)]);
+
+export const missions = pgTable("missions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  deviceId: uuid("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  title: text("title").notNull(), objective: text("objective").notNull(),
+  status: text("status").notNull().default("queued"),
+  planVersion: integer("plan_version").notNull().default(1),
+  progress: smallint("progress").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("missions_user_created_idx").on(t.userId, t.createdAt), index("missions_worker_idx").on(t.status, t.updatedAt)]);
+
+export const missionSteps = pgTable("mission_steps", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  missionId: uuid("mission_id").notNull().references(() => missions.id, { onDelete: "cascade" }),
+  position: smallint("position").notNull(), title: text("title").notNull(),
+  instructions: text("instructions").notNull(),
+  completionCriteria: jsonb("completion_criteria").$type<string[]>().notNull().default([]),
+  expectedArtifacts: jsonb("expected_artifacts").$type<string[]>().notNull().default([]),
+  status: text("status").notNull().default("pending"),
+  output: text("output"), error: text("error"),
+  taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+  attempts: smallint("attempts").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("mission_steps_position_idx").on(t.missionId, t.position), index("mission_steps_queue_idx").on(t.missionId, t.status, t.position)]);
+
+export const missionEvents = pgTable("mission_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  missionId: uuid("mission_id").notNull().references(() => missions.id, { onDelete: "cascade" }),
+  stepId: uuid("step_id").references(() => missionSteps.id, { onDelete: "set null" }),
+  type: text("type").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("mission_events_history_idx").on(t.missionId, t.createdAt)]);
 
 export const usersRelations = relations(users, ({ many }) => ({
   providers: many(aiProviders),

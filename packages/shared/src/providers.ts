@@ -86,10 +86,26 @@ export const AIModelSchema = z.object({
   label: z.string(),
   contextWindow: z.number().int().positive().nullable(),
   supportsTools: z.boolean().default(true),
+  capabilities: z.object({
+    input: z.object({
+      text: z.boolean(),
+      image: z.boolean(),
+      audio: z.enum(["none", "transcription", "native"]),
+      video: z.enum(["none", "frames", "native"]),
+      files: z.enum(["none", "text-extraction", "native"]),
+    }),
+    output: z.object({
+      text: z.boolean(),
+      audio: z.enum(["none", "speech", "realtime"]),
+    }),
+    realtime: z.boolean(),
+    tools: z.boolean(),
+  }).optional(),
   /** true quando o provider informa preço zero ou o modelo roda localmente */
   isFree: z.boolean().default(false),
 });
 export type AIModel = z.infer<typeof AIModelSchema>;
+export type ModelCapabilities = NonNullable<AIModel["capabilities"]>;
 
 export const AiProviderSchema = z.object({
   id: z.string().uuid(),

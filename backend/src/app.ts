@@ -12,6 +12,10 @@ import { conversationRoutes } from "./routes/conversations.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { agentRoutes } from "./routes/agent.js";
 import { memoryRoutes } from "./routes/memories.js";
+import { automationRoutes } from "./routes/automations.js";
+import { missionRoutes } from "./routes/missions.js";
+import { notionRoutes } from "./routes/notion.js";
+import { calendarRoutes } from "./routes/calendar.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -67,6 +71,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(conversationRoutes);
   await app.register(memoryRoutes);
   await app.register(taskRoutes);
+  await app.register(automationRoutes);
+  await app.register(missionRoutes);
+  await app.register(notionRoutes);
+  await app.register(calendarRoutes);
   await app.register(agentRoutes);
 
   app.setNotFoundHandler((req, reply) => {

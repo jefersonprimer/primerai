@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import { Check } from 'lucide-react-native';
+import { Check, X } from 'lucide-react-native';
 import type { AIModel, AiProvider } from '@primerai/shared';
 
 import { ThemedText } from '@/components/themed-text';
@@ -83,32 +83,54 @@ export function ModelPicker({
         <Pressable style={styles.backdropTouch} onPress={close} />
         <ThemedView type="backgroundElement" style={styles.card}>
           <View style={styles.head}>
-            <ThemedText type="smallBold">Modelo</ThemedText>
-            <Pressable onPress={close} hitSlop={10}>
-              <ThemedText>✕</ThemedText>
+            <View style={styles.titleGroup}>
+              <ThemedText type="subtitle">Modelo</ThemedText>
+              {provider && (
+                <View style={styles.providerBadge}>
+                  <ThemedText type="small" style={styles.providerLabel} numberOfLines={1}>
+                    {provider.label}
+                  </ThemedText>
+                </View>
+              )}
+            </View>
+            <Pressable
+              onPress={close}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Fechar seleção de modelo"
+              style={styles.closeButton}
+            >
+              <X size={18} color="#c8d2e8" />
             </Pressable>
           </View>
-
-          {provider && (
-            <ThemedText themeColor="textSecondary" type="small">
-              {provider.label}
-            </ThemedText>
-          )}
+          <ThemedText themeColor="textSecondary" type="small" style={styles.subtitle}>
+            Escolha o modelo para esta conversa
+          </ThemedText>
 
           {loading && <ActivityIndicator style={styles.loader} />}
 
           {!loading && error && <ThemedText style={styles.error}>{error}</ThemedText>}
 
-          {!loading && !error && models?.length === 0 && (
+          {!provider && (
             <ThemedText themeColor="textSecondary">
-              {withoutProvider
-                ? 'Nenhum provider de IA configurado.'
-                : 'Nenhum modelo disponível. Digite o id abaixo.'}
+              Nenhum provider de IA configurado.
+            </ThemedText>
+          )}
+
+          {provider && !accessToken && (
+            <ThemedText themeColor="textSecondary">
+              Entre na sua conta para listar os modelos.
+            </ThemedText>
+          )}
+
+          {!loading && !error && !withoutProvider && models?.length === 0 && (
+            <ThemedText themeColor="textSecondary">
+              Nenhum modelo disponível. Digite o id abaixo.
             </ThemedText>
           )}
 
           {models !== null && models.length > 0 && (
-            <ScrollView style={styles.list}>
+            <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
               {models.map((model) => {
                 const isSelected = model.id === selected;
                 return (
@@ -121,7 +143,7 @@ export function ModelPicker({
                     <ThemedText numberOfLines={1} style={styles.optionLabel}>
                       {describe(model)}
                     </ThemedText>
-                    {isSelected && <Check size={18} color="#6f8cff" />}
+                    {isSelected && <Check size={18} color="#e1e3e8" />}
                   </Pressable>
                 );
               })}
@@ -153,29 +175,64 @@ export function ModelPicker({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.65)' },
+  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(8,9,11,0.62)' },
   backdropTouch: { flex: 1 },
   card: {
     maxHeight: '82%',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: Spacing.three,
+    marginBottom: 12,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: Spacing.three,
+    paddingBottom: 28,
     gap: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#3b3d42',
+    backgroundColor: '#232427',
+    shadowColor: '#000000',
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
   },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 40 },
+  titleGroup: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  providerBadge: {
+    maxWidth: 132,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#303135',
+    borderWidth: 1,
+    borderColor: '#4a4b50',
+  },
+  providerLabel: { color: '#d0d1d5' },
+  closeButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: '#333438',
+  },
+  subtitle: { marginTop: -Spacing.one },
   loader: { marginVertical: Spacing.three },
   error: { color: '#f85149' },
-  list: { marginTop: Spacing.one },
+  list: { marginTop: Spacing.one, flexShrink: 1 },
+  listContent: { gap: 8, paddingBottom: 4 },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Spacing.two,
-    paddingVertical: 11,
-    paddingHorizontal: 11,
-    borderRadius: 10,
+    minHeight: 52,
+    paddingVertical: 10,
+    paddingHorizontal: 13,
+    borderRadius: 14,
+    backgroundColor: '#2b2c30',
+    borderWidth: 1,
+    borderColor: '#3a3b40',
   },
-  optionSelected: { backgroundColor: '#243050' },
+  optionSelected: { backgroundColor: '#37383d', borderColor: '#777980' },
   optionLabel: { flex: 1 },
   manualRow: {
     flexDirection: 'row',
@@ -185,8 +242,8 @@ const styles = StyleSheet.create({
     padding: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#343a47',
-    backgroundColor: '#161a22',
+    borderColor: '#4a4b50',
+    backgroundColor: '#27282b',
   },
   manualInput: {
     flex: 1,
@@ -195,7 +252,7 @@ const styles = StyleSheet.create({
     color: '#e6e9ef',
     fontSize: 15,
   },
-  manualButton: { backgroundColor: '#6f8cff', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999 },
+  manualButton: { backgroundColor: '#dedfe3', paddingHorizontal: 17, paddingVertical: 10, borderRadius: 999 },
   manualDisabled: { opacity: 0.45 },
-  manualLabel: { color: '#0d0f14', fontWeight: '700' },
+  manualLabel: { color: '#242529', fontWeight: '700' },
 });

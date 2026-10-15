@@ -1,9 +1,10 @@
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
 };
+use sha2::{Digest, Sha256};
 
 fn path_in_roots(path: &Path, roots: &[String]) -> Result<PathBuf, String> {
     let candidate = path
@@ -79,6 +80,136 @@ fn list_pdf_files(directory: String, roots: Vec<String>) -> Result<Vec<String>, 
         .collect::<Vec<_>>();
     files.sort();
     Ok(files)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OrganizeMove {
+    source: String,
+    file_name: String,
+    category: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DuplicateGroup {
+    files: Vec<String>,
+    size_bytes: u64,
+}
+
+#[tauri::command]
+fn find_duplicate_files(directory: String, roots: Vec<String>) -> Result<Vec<DuplicateGroup>, String> {
+    let dir = path_in_roots(Path::new(&directory), &roots)?;
+    if !dir.is_dir() { return Err("o caminho escolhido não é uma pasta".into()); }
+    let mut by_size: std::collections::BTreeMap<u64, Vec<PathBuf>> = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(&dir).map_err(|e| format!("não foi possível listar a pasta: {e}"))? {
+        let entry = entry.map_err(|e| format!("falha ao ler item da pasta: {e}"))?;
+        let path = entry.path();
+        if path.is_file() && !entry.file_type().map_err(|e| format!("falha ao ler item da pasta: {e}"))?.is_symlink() {
+            let path = path_in_roots(&path, &roots)?;
+            let size = fs::metadata(&path).map_err(|e| format!("não foi possível ler metadados: {e}"))?.len();
+            if size <= 512 * 1024 * 1024 { by_size.entry(size).or_default().push(path); }
+        }
+    }
+    let mut groups = Vec::new();
+    for (size, candidates) in by_size.into_iter().filter(|(_, files)| files.len() > 1) {
+        let mut by_hash: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for path in candidates {
+            let mut file = fs::File::open(&path).map_err(|e| format!("não foi possível abrir arquivo: {e}"))?;
+            let mut hasher = Sha256::new();
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let read = file.read(&mut buffer).map_err(|e| format!("não foi possível ler arquivo: {e}"))?;
+                if read == 0 { break; }
+                hasher.update(&buffer[..read]);
+            }
+            let hash = format!("{:x}", hasher.finalize());
+            by_hash.entry(hash).or_default().push(path.to_string_lossy().into_owned());
+        }
+        for files in by_hash.into_values().filter(|files| files.len() > 1) {
+            groups.push(DuplicateGroup { files, size_bytes: size });
+        }
+    }
+    Ok(groups)
+}
+
+fn file_category(path: &Path) -> &'static str {
+    match path.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase().as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "heic" => "Imagens",
+        "pdf" | "doc" | "docx" | "txt" | "rtf" | "odt" => "Documentos",
+        "xls" | "xlsx" | "csv" | "ods" => "Planilhas",
+        "ppt" | "pptx" | "odp" => "Apresentações",
+        "mp4" | "mov" | "mkv" | "avi" | "webm" => "Vídeos",
+        "mp3" | "wav" | "flac" | "m4a" | "ogg" => "Áudio",
+        "zip" | "rar" | "7z" | "tar" | "gz" => "Compactados",
+        "exe" | "msi" | "dmg" | "deb" | "rpm" | "appimage" => "Instaladores",
+        _ => "Outros",
+    }
+}
+
+#[tauri::command]
+fn plan_organize_files(directory: String, roots: Vec<String>) -> Result<Vec<OrganizeMove>, String> {
+    let dir = path_in_roots(Path::new(&directory), &roots)?;
+    if !dir.is_dir() { return Err("o caminho escolhido não é uma pasta".into()); }
+    let mut plan = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| format!("não foi possível listar a pasta: {e}"))? {
+        let entry = entry.map_err(|e| format!("falha ao ler item da pasta: {e}"))?;
+        let source = entry.path();
+        if !source.is_file() { continue; }
+        // Links simbólicos e arquivos que saem do workspace não entram no plano.
+        let source = path_in_roots(&source, &roots)?;
+        let Some(file_name) = source.file_name().and_then(|x| x.to_str()) else { continue; };
+        let category = file_category(&source);
+        let destination = dir.join(category).join(file_name);
+        if destination.exists() { continue; }
+        plan.push(OrganizeMove { source: source.to_string_lossy().into_owned(), file_name: file_name.into(), category: category.into() });
+        if plan.len() >= 300 { break; }
+    }
+    plan.sort_by(|a, b| a.category.cmp(&b.category).then(a.file_name.cmp(&b.file_name)));
+    Ok(plan)
+}
+
+#[tauri::command]
+fn execute_organize_files(directory: String, moves: Vec<OrganizeMove>, roots: Vec<String>) -> Result<Vec<String>, String> {
+    let dir = path_in_roots(Path::new(&directory), &roots)?;
+    if !dir.is_dir() || moves.len() > 300 { return Err("plano de organização inválido".into()); }
+    let mut completed = Vec::new();
+    for item in moves {
+        let source = path_in_roots(Path::new(&item.source), &roots)?;
+        if source.parent() != Some(dir.as_path()) || !source.is_file() {
+            return Err("um arquivo do plano mudou desde a prévia; gere o plano novamente".into());
+        }
+        if file_category(&source) != item.category || source.file_name().and_then(|x| x.to_str()) != Some(item.file_name.as_str()) {
+            return Err("o plano não corresponde ao arquivo atual".into());
+        }
+        let category = match item.category.as_str() {
+            "Imagens" | "Documentos" | "Planilhas" | "Apresentações" | "Vídeos" | "Áudio" | "Compactados" | "Instaladores" | "Outros" => item.category.clone(),
+            _ => return Err("categoria inválida no plano".into()),
+        };
+        let target_dir = dir.join(category);
+        fs::create_dir_all(&target_dir).map_err(|e| format!("não foi possível criar pasta de categoria: {e}"))?;
+        // Resolve o destino depois de criar a pasta e valide a fronteira novamente.
+        let target = path_in_roots(&target_dir.join(&item.file_name), &roots)?;
+        if target.exists() { return Err(format!("{} já existe no destino; nenhum arquivo foi sobrescrito", item.file_name)); }
+        fs::rename(&source, &target).map_err(|e| format!("não foi possível mover {}: {e}", item.file_name))?;
+        completed.push(target.to_string_lossy().into_owned());
+    }
+    Ok(completed)
+}
+
+#[tauri::command]
+fn undo_organize_files(directory: String, moves: Vec<OrganizeMove>, roots: Vec<String>) -> Result<usize, String> {
+    let dir = path_in_roots(Path::new(&directory), &roots)?;
+    let mut restored = 0;
+    for item in moves {
+        let source = path_in_roots(Path::new(&item.source), &roots)?;
+        let target = path_in_roots(&dir.join(&item.category).join(&item.file_name), &roots)?;
+        if source.exists() { return Err(format!("{} já existe na pasta original; desfazer foi interrompido", item.file_name)); }
+        if !target.is_file() { return Err(format!("{} não está mais no destino esperado; desfazer foi interrompido", item.file_name)); }
+        fs::rename(target, source).map_err(|e| format!("não foi possível restaurar {}: {e}", item.file_name))?;
+        restored += 1;
+    }
+    Ok(restored)
 }
 
 fn pdf_escape(s: &str) -> String {
@@ -350,6 +481,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             {
@@ -365,7 +497,11 @@ pub fn run() {
             write_text_file,
             create_directory,
             copy_pdf,
-            suggested_workspaces
+            suggested_workspaces,
+            plan_organize_files,
+            execute_organize_files,
+            undo_organize_files,
+            find_duplicate_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

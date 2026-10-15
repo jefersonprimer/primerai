@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type Memory, type ProviderId } from '@primerai/shared';
+import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type Memory, type MemorySettings, type MemorySuggestion, type ProviderId, type TransformationTarget } from '@primerai/shared';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.5.22:8787').replace(/\/+$/, '');
 
@@ -86,6 +86,22 @@ export interface RemoteTask {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+export interface RemoteApproval {
+  id: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  impactSummary: string;
+  args: { directory?: string; count?: number };
+}
+
+export interface MeetingAnalysis {
+  summary: string;
+  decisions: Array<{ text: string; confidence: 'explicit' | 'inferred' }>;
+  tasks: Array<{ text: string; assignee: string | null; dueDate: string | null; source: 'explicit' | 'inferred' }>;
+  importantPoints: string[];
+  pendingQuestions: string[];
+  groupMessage: string;
 }
 
 const SESSION_KEY = 'primerai.session';
@@ -220,6 +236,18 @@ export const api = {
     request<{ conversations: Conversation[] }>(routes.conversations, {}, token).then((r) => r.conversations),
 
   listMemories: (token: string) => request<{ memories: Memory[] }>(routes.memories, {}, token).then((r) => r.memories),
+  clearMemories: (token: string) => request<void>(routes.memories, { method: 'DELETE' }, token),
+  getMemorySettings: (token: string) => request<{ settings: MemorySettings }>(routes.memorySettings, {}, token).then((r) => r.settings),
+  updateMemorySettings: (token: string, settings: Partial<MemorySettings>) => request<{ settings: MemorySettings }>(routes.memorySettings, { method: 'PATCH', body: JSON.stringify(settings) }, token).then((r) => r.settings),
+  listMemorySuggestions: (token: string) => request<{ suggestions: MemorySuggestion[] }>(routes.memorySuggestions, {}, token).then((r) => r.suggestions),
+  acceptMemorySuggestion: (token: string, id: string, update?: Partial<Pick<MemorySuggestion, 'key' | 'value' | 'category'>>) => request<{ memory: Memory }>(routes.memorySuggestionAccept(id), { method: 'POST', body: JSON.stringify(update ?? {}) }, token).then((r) => r.memory),
+  dismissMemorySuggestion: (token: string, id: string) => request<void>(routes.memorySuggestionDismiss(id), { method: 'POST' }, token),
+  notionStatus: (token: string) => request<{ connected: boolean; workspaceName: string | null }>("/v1/integrations/notion", {}, token),
+  notionConnect: (token: string) => request<{ authorizationUrl: string }>("/v1/integrations/notion/connect", {}, token),
+  notionDisconnect: (token: string) => request<void>("/v1/integrations/notion", { method: "DELETE" }, token),
+  calendarStatus: (token: string) => request<{ connected: boolean; calendarId: string | null }>("/v1/integrations/calendar", {}, token),
+  calendarConnect: (token: string) => request<{ authorizationUrl: string }>("/v1/integrations/calendar/connect", {}, token),
+  calendarDisconnect: (token: string) => request<void>("/v1/integrations/calendar", { method: "DELETE" }, token),
   saveMemory: (token: string, key: string, value: string, category = 'context') => request<{ memory: Memory }>(routes.memory(key), { method: 'PUT', body: JSON.stringify({ value, category }) }, token).then((r) => r.memory),
   deleteMemory: (token: string, key: string) => request<void>(routes.memory(key), { method: 'DELETE' }, token),
 
@@ -247,16 +275,27 @@ export const api = {
   listMessages: (token: string, id: string) =>
     request<{ messages: ChatMessage[] }>(routes.conversationMessages(id), {}, token).then((r) => r.messages),
 
-  sendMessage: (token: string, id: string, content: string, images?: { mimeType: string; data: string }[]) =>
+  sendMessage: (token: string, id: string, content: string, images?: { mimeType: string; data: string }[], transformation?: { target: TransformationTarget; source: string; instructions?: string }) =>
     request<{ messages: ChatMessage[] }>(routes.conversationMessages(id), {
       method: 'POST',
-      body: JSON.stringify({ content, images }),
+      body: JSON.stringify({ content, images, transformation }),
     }, token).then((r) => r.messages),
 
   sendAnonymousMessage: (token: string, model: string | undefined, messages: { role: 'user' | 'assistant'; content: string; images?: { mimeType: string; data: string }[] }[]) =>
     request<{ answer: string; model: string }>('/v1/agent/chat', {
       method: 'POST',
       body: JSON.stringify({ model, messages }),
+    }, token),
+
+  analyzeMeeting: (token: string, transcript: string, title?: string) =>
+    request<{ title: string; analysis: MeetingAnalysis; model: string }>('/v1/agent/meeting', {
+      method: 'POST',
+      body: JSON.stringify({ transcript, title }),
+    }, token),
+
+  extractPdf: (token: string, name: string, data: string) =>
+    request<{ name: string; text: string }>('/v1/agent/extract-pdf', {
+      method: 'POST', body: JSON.stringify({ name, data }),
     }, token),
 
   listDevices: (token: string) =>
@@ -269,6 +308,12 @@ export const api = {
 
   listTasks: (token: string) =>
     request<{ tasks: RemoteTask[] }>(routes.tasks, {}, token).then((r) => r.tasks),
+
+  getTaskApproval: (token: string, taskId: string) =>
+    request<{ approval: RemoteApproval }>(routes.taskApproval(taskId), {}, token).then((r) => r.approval),
+
+  resolveApproval: (token: string, approvalId: string, approved: boolean) =>
+    request<void>(approved ? routes.approvalApprove(approvalId) : routes.approvalDeny(approvalId), { method: 'POST' }, token),
 
   cancelTask: (token: string, id: string) =>
     request<{ task: RemoteTask }>(`${routes.tasks}/${id}/cancel`, { method: 'POST' }, token).then((r) => r.task),

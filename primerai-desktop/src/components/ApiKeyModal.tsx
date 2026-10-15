@@ -1,37 +1,79 @@
-import { useState } from "react";
-import { PROVIDER_CATALOG, type AIModel, type ProviderId } from "@primerai/shared";
+import { useEffect, useState } from "react";
+import { PROVIDER_CATALOG, type AIModel, type AiProvider, type ProviderId } from "@primerai/shared";
 import { ApiError, api, type Session } from "../lib/api";
 
 export interface ApiKeyModalProps {
   /** null = usuário ainda não tem provider nenhum (primeira abertura) */
   initialProvider?: ProviderId | null;
+  /** providers já salvos no servidor — o modal precisa saber o padrão atual */
+  providers?: AiProvider[];
   session: Session;
+  /** chamado logo após o provider ser gravado, para o app recarregar a lista */
+  onSaved?: () => void | Promise<void>;
+  /** renderiza o formulário sem o backdrop, dentro do modal de Configurações */
+  embedded?: boolean;
   onClose: () => void;
 }
 
 type Status = "idle" | "saving" | "discovering";
 
-export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKeyModalProps) {
-  const [provider, setProvider] = useState<ProviderId>(initialProvider ?? "openrouter");
+function pickInitialProvider(providers: AiProvider[], explicit: ProviderId | null): ProviderId {
+  if (explicit) return explicit;
+  const saved = providers.find((p) => p.isDefault) ?? providers[0];
+  return saved?.provider ?? "openrouter";
+}
+
+function existingRow(providers: AiProvider[], provider: ProviderId): AiProvider | undefined {
+  return providers.find((p) => p.provider === provider);
+}
+
+export function ApiKeyModal({
+  initialProvider = null,
+  providers = [],
+  session,
+  onSaved,
+  embedded = false,
+  onClose,
+}: ApiKeyModalProps) {
+  const initialChoice = pickInitialProvider(providers, initialProvider);
+  const initialRow = existingRow(providers, initialChoice);
+  const currentDefault = providers.find((p) => p.isDefault) ?? providers[0];
+
+  const [provider, setProvider] = useState<ProviderId>(initialChoice);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [model, setModel] = useState<string>(
-    PROVIDER_CATALOG.find((p) => p.id === (initialProvider ?? "openrouter"))!.suggestedModel,
-  );
   const [models, setModels] = useState<AIModel[]>([]);
-  const [savedProviderId, setSavedProviderId] = useState<string | null>(null);
+  const [savedProviderId, setSavedProviderId] = useState<string | null>(
+    initialRow?.id ?? null,
+  );
+  const [model, setModel] = useState<string>(
+    initialRow?.defaultModel ??
+      PROVIDER_CATALOG.find((p) => p.id === initialChoice)!.suggestedModel,
+  );
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
+  const savedRow = existingRow(providers, provider);
   const entry = PROVIDER_CATALOG.find((p) => p.id === provider)!;
+  /** a chave só é obrigatória se ainda não existe uma salva para este provider */
+  const needsKey = entry.keyRequired && !savedProviderId && !apiKey.trim();
+
+  // se a linha selecionada foi removida fora do modal, volta a criar uma nova
+  useEffect(() => {
+    setSavedProviderId((current) =>
+      current && !providers.some((p) => p.id === current) ? null : current,
+    );
+  }, [providers]);
 
   function pickProvider(next: ProviderId) {
     const picked = PROVIDER_CATALOG.find((p) => p.id === next)!;
+    const alreadySaved = existingRow(providers, next);
     setProvider(next);
-    setSavedProviderId(null);
-    setModel(picked.suggestedModel);
+    setSavedProviderId(alreadySaved?.id ?? null);
+    setModel(alreadySaved?.defaultModel ?? picked.suggestedModel);
     setModels([]);
+    setApiKey("");
     setError(null);
     setOk(null);
   }
@@ -39,8 +81,9 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
   /** salva a chave e devolve o id — a mesma coisa serve pro submit e pra busca de modelos */
   async function save(): Promise<string> {
     if (savedProviderId) {
+      // já existe uma linha: atualiza em vez de criar um provider duplicado
       await api.updateProvider(session.accessToken, savedProviderId, {
-        apiKey: apiKey.trim(),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         defaultModel: model,
         isDefault: true,
       });
@@ -61,7 +104,7 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
     setError(null);
     setOk(null);
 
-    if (entry.keyRequired && !apiKey.trim()) {
+    if (needsKey) {
       setError(`O ${entry.label} precisa de uma API key.`);
       return;
     }
@@ -69,6 +112,7 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
     setStatus("saving");
     try {
       const id = await save();
+      void onSaved?.();
 
       // valida depois de salvar: se a chave estiver errada o usuário continua
       // logado, só precisa corrigir em Configurações — não preso num modal
@@ -88,7 +132,7 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
     try {
       // salvar antes de listar é necessário: a chave nunca sai do backend,
       // então o backend precisa tê-la guardada para consultar a API do provider
-      const canSave = apiKey.trim().length > 0 || !entry.keyRequired;
+      const canSave = apiKey.trim().length > 0 || !!savedProviderId || !entry.keyRequired;
       const id = canSave ? await save() : null;
 
       if (!id) {
@@ -111,14 +155,25 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Conectar sua IA">
-      <form className="modal" onSubmit={handleSubmit}>
+    <div
+      className={embedded ? "settings-embed" : "modal-backdrop"}
+      role={embedded ? undefined : "dialog"}
+      aria-modal={embedded ? undefined : true}
+      aria-label={embedded ? undefined : "Conectar sua IA"}
+    >
+      <form className={embedded ? "settings-embed-form" : "modal"} onSubmit={handleSubmit}>
         <header className="modal-head">
-          <h1>Conectar sua IA</h1>
+          {embedded ? <h2>Conectar sua IA</h2> : <h1>Conectar sua IA</h1>}
           <p>
             A chave fica cifrada no seu servidor e nunca é compartilhada. Você pode trocar ou
             remover a qualquer momento.
           </p>
+          {currentDefault && (
+            <p className="muted">
+              Padrão atual: {currentDefault.label}
+              {currentDefault.defaultModel ? ` · ${currentDefault.defaultModel}` : ""}
+            </p>
+          )}
         </header>
 
         <div className="provider-grid">
@@ -133,6 +188,12 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
             >
               <span className="provider-chip-name">{p.label}</span>
               <span className="provider-chip-blurb">{p.blurb}</span>
+              {existingRow(providers, p.id) && (
+                <span className="provider-chip-saved">
+                  {p.id === currentDefault?.provider ? "padrão · " : ""}
+                  {existingRow(providers, p.id)!.keyHint}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -144,11 +205,11 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
               type={showKey || !entry.keyRequired ? "text" : "password"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={entry.keyPlaceholder}
+              placeholder={savedRow?.keyHint ?? entry.keyPlaceholder}
               spellCheck={false}
               autoComplete="off"
               disabled={!entry.keyRequired}
-              autoFocus={entry.keyRequired}
+              autoFocus={entry.keyRequired && !savedProviderId}
             />
             {entry.keyRequired && (
               <button
@@ -161,6 +222,11 @@ export function ApiKeyModal({ initialProvider = null, session, onClose }: ApiKey
               </button>
             )}
           </div>
+          {savedRow && (
+            <span className="field-hint">
+              já salva · deixe em branco para manter a chave atual
+            </span>
+          )}
           {entry.keyRequired && (
             <a className="field-hint" href={entry.docsUrl} target="_blank" rel="noreferrer">
               🔗 obter uma chave no {entry.label}

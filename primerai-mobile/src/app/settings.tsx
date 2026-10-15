@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -9,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import {
   Brain,
   ChevronLeft,
@@ -19,7 +21,7 @@ import {
   Trash2,
   User,
 } from "lucide-react-native";
-import type { AiProvider } from "@primerai/shared";
+import type { AiProvider, MemorySettings, MemorySuggestion } from "@primerai/shared";
 
 import { ApiKeyModal } from "@/components/api-key-modal";
 import { ThemedText } from "@/components/themed-text";
@@ -40,17 +42,78 @@ export default function SettingsScreen() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [memories, setMemories] = useState<
-    { key: string; value: string; category?: string; createdAt: string }[]
+    { key: string; value: string; category?: string; origin?: string; createdAt: string }[]
   >([]);
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryValue, setMemoryValue] = useState("");
   const [memoryCategory, setMemoryCategory] = useState("context");
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memorySettings, setMemorySettings] = useState<MemorySettings>({ useMemoriesInChat: true, automaticSuggestionsEnabled: false });
+  const [memorySuggestions, setMemorySuggestions] = useState<MemorySuggestion[]>([]);
+  const [notion, setNotion] = useState<{ connected: boolean; workspaceName: string | null } | null>(null);
+  const [notionBusy, setNotionBusy] = useState(false);
+  const [notionMessage, setNotionMessage] = useState<string | null>(null);
+  const [calendar, setCalendar] = useState<{ connected: boolean; calendarId: string | null } | null>(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
+
+  async function refreshNotion() {
+    if (!session) return;
+    try { setNotion(await api.notionStatus(session.accessToken)); }
+    catch (err) { setNotionMessage(err instanceof Error ? err.message : "Não foi possível consultar o Notion."); }
+  }
+
+  async function connectNotion() {
+    if (!session || notionBusy) return;
+    setNotionBusy(true); setNotionMessage(null);
+    try {
+      const { authorizationUrl } = await api.notionConnect(session.accessToken);
+      await WebBrowser.openBrowserAsync(authorizationUrl);
+      await refreshNotion();
+    } catch (err) { setNotionMessage(err instanceof Error ? err.message : "Não foi possível iniciar a conexão com o Notion."); }
+    finally { setNotionBusy(false); }
+  }
+
+  async function disconnectNotion() {
+    if (!session || notionBusy) return;
+    setNotionBusy(true); setNotionMessage(null);
+    try { await api.notionDisconnect(session.accessToken); setNotion({ connected: false, workspaceName: null }); }
+    catch (err) { setNotionMessage(err instanceof Error ? err.message : "Não foi possível desconectar o Notion."); }
+    finally { setNotionBusy(false); }
+  }
+
+  async function refreshCalendar() {
+    if (!session) return;
+    try { setCalendar(await api.calendarStatus(session.accessToken)); }
+    catch (err) { setCalendarMessage(err instanceof Error ? err.message : "Não foi possível consultar o Google Calendar."); }
+  }
+
+  async function connectCalendar() {
+    if (!session || calendarBusy) return;
+    setCalendarBusy(true); setCalendarMessage(null);
+    try {
+      const { authorizationUrl } = await api.calendarConnect(session.accessToken);
+      await WebBrowser.openBrowserAsync(authorizationUrl);
+      await refreshCalendar();
+    } catch (err) { setCalendarMessage(err instanceof Error ? err.message : "Não foi possível iniciar a conexão com o Google Calendar."); }
+    finally { setCalendarBusy(false); }
+  }
+
+  async function disconnectCalendar() {
+    if (!session || calendarBusy) return;
+    setCalendarBusy(true); setCalendarMessage(null);
+    try { await api.calendarDisconnect(session.accessToken); setCalendar({ connected: false, calendarId: null }); }
+    catch (err) { setCalendarMessage(err instanceof Error ? err.message : "Não foi possível desconectar o Google Calendar."); }
+    finally { setCalendarBusy(false); }
+  }
 
   async function refreshMemories() {
     if (!session) return;
     try {
       setMemories(await api.listMemories(session.accessToken));
+      const [settings, suggestions] = await Promise.all([api.getMemorySettings(session.accessToken), api.listMemorySuggestions(session.accessToken)]);
+      setMemorySettings(settings);
+      setMemorySuggestions(suggestions);
     } catch (err) {
       setMemoryError(
         err instanceof Error
@@ -61,7 +124,34 @@ export default function SettingsScreen() {
   }
 
   useEffect(() => {
-    void refreshMemories();
+    const token = session?.accessToken;
+    if (!token) return;
+    let cancelled = false;
+    void Promise.all([api.listMemories(token), api.getMemorySettings(token), api.listMemorySuggestions(token)])
+      .then(([items, settings, suggestions]) => {
+        if (cancelled) return;
+        setMemories(items); setMemorySettings(settings); setMemorySuggestions(suggestions);
+      })
+      .catch((err) => { if (!cancelled) setMemoryError(err instanceof Error ? err.message : "Não foi possível carregar a memória."); });
+    return () => { cancelled = true; };
+  }, [session?.accessToken]);
+
+  useEffect(() => {
+    const token = session?.accessToken;
+    if (!token) return;
+    let cancelled = false;
+    void api.calendarStatus(token).then((status) => { if (!cancelled) setCalendar(status); })
+      .catch((err) => { if (!cancelled) setCalendarMessage(err instanceof Error ? err.message : "Não foi possível consultar o Google Calendar."); });
+    return () => { cancelled = true; };
+  }, [session?.accessToken]);
+
+  useEffect(() => {
+    const token = session?.accessToken;
+    if (!token) return;
+    let cancelled = false;
+    void api.notionStatus(token).then((status) => { if (!cancelled) setNotion(status); })
+      .catch((err) => { if (!cancelled) setNotionMessage(err instanceof Error ? err.message : "Não foi possível consultar o Notion."); });
+    return () => { cancelled = true; };
   }, [session?.accessToken]);
 
   async function saveMemory() {
@@ -94,6 +184,35 @@ export default function SettingsScreen() {
           : "Não foi possível apagar a memória.",
       );
     }
+  }
+
+  async function updateMemorySetting(patch: Partial<MemorySettings>) {
+    if (!session) return;
+    try { setMemorySettings(await api.updateMemorySettings(session.accessToken, patch)); }
+    catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível atualizar as preferências da memória."); }
+  }
+
+  async function acceptMemorySuggestion(suggestion: MemorySuggestion) {
+    if (!session) return;
+    try {
+      await api.acceptMemorySuggestion(session.accessToken, suggestion.id);
+      setMemorySuggestions((items) => items.filter((item) => item.id !== suggestion.id));
+      await refreshMemories();
+    } catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível salvar a sugestão."); }
+  }
+
+  async function dismissMemorySuggestion(id: string) {
+    if (!session) return;
+    try { await api.dismissMemorySuggestion(session.accessToken, id); setMemorySuggestions((items) => items.filter((item) => item.id !== id)); }
+    catch (err) { setMemoryError(err instanceof Error ? err.message : "Não foi possível descartar a sugestão."); }
+  }
+
+  function clearAllMemories() {
+    if (!session) return;
+    Alert.alert("Apagar todas as memórias?", "Isso remove o perfil salvo. As conversas não serão apagadas.", [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Apagar tudo", style: "destructive", onPress: () => { void api.clearMemories(session.accessToken).then(() => { setMemories([]); }).catch((err) => setMemoryError(err instanceof Error ? err.message : "Não foi possível apagar as memórias.")); } },
+    ]);
   }
 
   async function deleteProvider() {
@@ -171,6 +290,44 @@ export default function SettingsScreen() {
                     Sessão ativa
                   </ThemedText>
                 </View>
+              </View>
+            </ThemedView>
+          </View>
+
+          {/* Seção Google Calendar */}
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Google Calendar</ThemedText>
+            </View>
+            <ThemedView type="backgroundElement" style={styles.card}>
+              <ThemedText themeColor="textSecondary" type="small">
+                {calendar?.connected
+                  ? "Conectado. Peça à IA para agendar reuniões, consultas e compromissos."
+                  : "Conecte sua agenda para permitir que a IA crie eventos quando você pedir."}
+              </ThemedText>
+              {calendarMessage && <ThemedText style={styles.error}>{calendarMessage}</ThemedText>}
+              <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+                <Button label={calendarBusy ? "Aguarde…" : calendar?.connected ? "Desconectar" : "Conectar Google Calendar"} disabled={calendarBusy || !session} onPress={() => void (calendar?.connected ? disconnectCalendar() : connectCalendar())} />
+                <Button variant="secondary" label="Atualizar status" disabled={calendarBusy} onPress={() => void refreshCalendar()} />
+              </View>
+            </ThemedView>
+          </View>
+
+          {/* Seção Notion */}
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>Notion</ThemedText>
+            </View>
+            <ThemedView type="backgroundElement" style={styles.card}>
+              <ThemedText themeColor="textSecondary" type="small">
+                {notion?.connected
+                  ? `Conectado${notion.workspaceName ? ` a ${notion.workspaceName}` : ""}. A IA pode criar notas no seu espaço.`
+                  : "Conecte seu espaço para pedir à IA que crie notas no Notion."}
+              </ThemedText>
+              {notionMessage && <ThemedText style={styles.error}>{notionMessage}</ThemedText>}
+              <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+                <Button label={notionBusy ? "Aguarde…" : notion?.connected ? "Desconectar" : "Conectar Notion"} disabled={notionBusy || !session} onPress={() => void (notion?.connected ? disconnectNotion() : connectNotion())} />
+                <Button variant="secondary" label="Atualizar status" disabled={notionBusy} onPress={() => void refreshNotion()} />
               </View>
             </ThemedView>
           </View>
@@ -268,8 +425,25 @@ export default function SettingsScreen() {
               type="small"
               style={styles.sectionDesc}
             >
-              Estas informações são usadas em todos os seus chats. Toque em uma memória para editá-la. Evite salvar senhas ou dados sensíveis.
+              Preferências e contexto ajudam em novos chats. Sugestões automáticas só são salvas depois da sua aprovação. Evite guardar senhas ou dados sensíveis.
             </ThemedText>
+
+            <Pressable onPress={() => void updateMemorySetting({ useMemoriesInChat: !memorySettings.useMemoriesInChat })} style={[styles.card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <ThemedText>Usar memórias nos chats</ThemedText><ThemedText type="smallBold">{memorySettings.useMemoriesInChat ? "Ativado" : "Desativado"}</ThemedText>
+            </Pressable>
+            <Pressable onPress={() => void updateMemorySetting({ automaticSuggestionsEnabled: !memorySettings.automaticSuggestionsEnabled })} style={[styles.card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <ThemedText>Sugerir novas memórias</ThemedText><ThemedText type="smallBold">{memorySettings.automaticSuggestionsEnabled ? "Ativado" : "Desativado"}</ThemedText>
+            </Pressable>
+
+            {memorySuggestions.length > 0 && <ThemedText type="smallBold">Sugestões para revisar</ThemedText>}
+            {memorySuggestions.map((suggestion) => <ThemedView key={suggestion.id} type="backgroundElement" style={styles.card}>
+              <ThemedText type="smallBold">{suggestion.category} · {suggestion.key}</ThemedText>
+              <ThemedText themeColor="textSecondary">{suggestion.value}</ThemedText>
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <Pressable onPress={() => void acceptMemorySuggestion(suggestion)}><ThemedText type="smallBold">Guardar</ThemedText></Pressable>
+                <Pressable onPress={() => void dismissMemorySuggestion(suggestion.id)}><ThemedText themeColor="textSecondary" type="small">Agora não</ThemedText></Pressable>
+              </View>
+            </ThemedView>)}
 
             {memoryError && (
               <ThemedText style={styles.error}>{memoryError}</ThemedText>
@@ -284,6 +458,7 @@ export default function SettingsScreen() {
                 <View style={styles.cardHead}>
                   <Pressable onPress={() => { setMemoryKey(memory.key); setMemoryValue(memory.value); setMemoryCategory(memory.category || "context"); }}>
                     <ThemedText type="smallBold">{memory.category || "context"} · {memory.key}</ThemedText>
+                    <ThemedText themeColor="textSecondary" type="small">{memory.origin === "accepted_suggestion" ? "Sugestão aprovada" : memory.origin === "explicit" ? "Pedido explícito" : "Adicionada manualmente"}</ThemedText>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -304,11 +479,12 @@ export default function SettingsScreen() {
                 </ThemedText>
               </ThemedView>
             ))}
+            {memories.length > 0 && <Pressable onPress={clearAllMemories} style={{ alignSelf: "flex-start", paddingVertical: 8 }}><ThemedText style={styles.error}>Apagar todas as memórias</ThemedText></Pressable>}
 
             <View style={styles.formGroup}>
               <ThemedText themeColor="textSecondary" type="small">Categoria: {memoryCategory}</ThemedText>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {["preference", "project", "person", "goal", "context", "history"].map((category) => (
+                {["preference", "writing_style", "project", "workflow", "person", "goal", "context", "history"].map((category) => (
                   <Pressable key={category} onPress={() => setMemoryCategory(category)} style={{ padding: 8, borderRadius: 8, backgroundColor: memoryCategory === category ? theme.backgroundSelected : theme.backgroundElement }}>
                     <ThemedText type="small">{category}</ThemedText>
                   </Pressable>

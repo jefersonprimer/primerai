@@ -25,7 +25,14 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-image-picker", { "photosPermission": "Permitir que o PrimerAi acesse suas fotos para enviá-las ao modelo.", "cameraPermission": "Permitir que o PrimerAi use a câmera para enviar fotos ao modelo.", "microphonePermission": false }],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir que o PrimerAi acesse suas fotos para criar PDFs e analisá-las quando você solicitar.",
+          "cameraPermission": "Permitir que o PrimerAi use a câmera para criar PDFs e analisar imagens quando você solicitar.",
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -34,7 +41,8 @@
           "imageWidth": 76
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

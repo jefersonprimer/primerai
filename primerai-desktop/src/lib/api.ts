@@ -1,4 +1,4 @@
-import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type Memory, type ProviderId } from "@primerai/shared";
+import { routes, type AIModel, type AiProvider, type ChatMessage, type Conversation, type Memory, type MemorySettings, type MemorySuggestion, type ProjectProfile, type ProviderId } from "@primerai/shared";
 
 const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8787").replace(/\/+$/, "");
 
@@ -161,11 +161,32 @@ export const api = {
     request<{ conversations: Conversation[] }>(routes.conversations, {}, token).then((r) => r.conversations),
 
   listMemories: (token: string) => request<{ memories: Memory[] }>(routes.memories, {}, token).then((r) => r.memories),
+  clearMemories: (token: string) => request<void>(routes.memories, { method: "DELETE" }, token),
+  getMemorySettings: (token: string) => request<{ settings: MemorySettings }>(routes.memorySettings, {}, token).then((r) => r.settings),
+  updateMemorySettings: (token: string, settings: Partial<MemorySettings>) => request<{ settings: MemorySettings }>(routes.memorySettings, { method: "PATCH", body: JSON.stringify(settings) }, token).then((r) => r.settings),
+  listMemorySuggestions: (token: string) => request<{ suggestions: MemorySuggestion[] }>(routes.memorySuggestions, {}, token).then((r) => r.suggestions),
+  listProjects: (token: string) => request<{ projects: ProjectProfile[] }>("/v1/projects", {}, token).then((r) => r.projects),
+  acceptMemorySuggestion: (token: string, id: string) => request<{ memory: Memory }>(routes.memorySuggestionAccept(id), { method: "POST", body: "{}" }, token).then((r) => r.memory),
+  dismissMemorySuggestion: (token: string, id: string) => request<void>(routes.memorySuggestionDismiss(id), { method: "POST" }, token),
+  notionStatus: (token: string) => request<{ connected: boolean; workspaceName: string | null }>("/v1/integrations/notion", {}, token),
+  notionConnect: (token: string) => request<{ authorizationUrl: string }>("/v1/integrations/notion/connect", {}, token),
+  notionDisconnect: (token: string) => request<void>("/v1/integrations/notion", { method: "DELETE" }, token),
+  calendarStatus: (token: string) => request<{ connected: boolean; calendarId: string | null }>("/v1/integrations/calendar", {}, token),
+  calendarConnect: (token: string) => request<{ authorizationUrl: string }>("/v1/integrations/calendar/connect", {}, token),
+  calendarDisconnect: (token: string) => request<void>("/v1/integrations/calendar", { method: "DELETE" }, token),
   saveMemory: (token: string, key: string, value: string, category = "context") => request<{ memory: Memory }>(routes.memory(key), { method: "PUT", body: JSON.stringify({ value, category }) }, token).then((r) => r.memory),
   deleteMemory: (token: string, key: string) => request<void>(routes.memory(key), { method: "DELETE" }, token),
 
-  createConversation: (token: string) =>
-    request<{ conversation: Conversation }>(routes.conversations, { method: "POST", body: JSON.stringify({}) }, token)
+  createConversation: (token: string, model?: string) =>
+    request<{ conversation: Conversation }>(routes.conversations, { method: "POST", body: JSON.stringify(model ? { model } : {}) }, token)
+      .then((r) => r.conversation),
+
+  updateConversationModel: (token: string, id: string, model: string) =>
+    request<{ conversation: Conversation }>(routes.conversation(id), { method: "PATCH", body: JSON.stringify({ model }) }, token)
+      .then((r) => r.conversation),
+
+  updateConversationTitle: (token: string, id: string, title: string) =>
+    request<{ conversation: Conversation }>(routes.conversation(id), { method: "PATCH", body: JSON.stringify({ title }) }, token)
       .then((r) => r.conversation),
 
   deleteConversation: (token: string, id: string) =>
@@ -174,11 +195,34 @@ export const api = {
   listMessages: (token: string, id: string) =>
     request<{ messages: ChatMessage[] }>(routes.conversationMessages(id), {}, token).then((r) => r.messages),
 
-  sendMessage: (token: string, id: string, content: string) =>
+  uploadChatImage: (token: string, id: string, image: { name: string; mimeType: string; data: string }) =>
+    request<{ attachment: { id: string } }>(`${routes.conversation(id)}/attachments`, {
+      method: "POST", body: JSON.stringify(image),
+    }, token).then((r) => r.attachment),
+
+  deleteAttachment: (token: string, id: string) =>
+    request<void>(`/v1/attachments/${id}`, { method: "DELETE" }, token),
+
+  sendMessage: (token: string, id: string, content: string, attachmentIds: string[] = [], options: { useMemory?: boolean; webSearch?: boolean; projectId?: string } = {}) =>
     request<{ messages: ChatMessage[] }>(routes.conversationMessages(id), {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...options, ...(attachmentIds.length ? { parts: attachmentIds.map((attachmentId) => ({ type: "image", attachmentId })) } : {}) }),
     }, token).then((r) => r.messages),
+
+  sendAnonymousMessage: (
+    token: string,
+    model: string | undefined,
+    messages: { role: "user" | "assistant"; content: string; images?: { mimeType: string; data: string }[] }[],
+  ) =>
+    request<{ answer: string; model: string }>("/v1/agent/chat", {
+      method: "POST",
+      body: JSON.stringify({ model, messages }),
+    }, token),
+
+  extractPdf: (token: string, name: string, data: string) =>
+    request<{ name: string; text: string }>('/v1/agent/extract-pdf', {
+      method: 'POST', body: JSON.stringify({ name, data }),
+    }, token),
 
   registerDevice: (token: string) => {
     const key = "primerai.desktop.install-id";
@@ -195,13 +239,23 @@ export const api = {
   saveWorkspaces: (token: string, id: string, items: { label: string; path: string }[]) => request<void>(routes.deviceWorkspaces(id), {
     method: "PUT", body: JSON.stringify({ items }),
   }, token),
-  claimTask: (token: string, id: string) => request<{ task: { id: string; prompt: string } | null }>(routes.deviceClaimTask(id), { method: "POST" }, token).then((r) => r.task),
-  listTasks: (token: string) => request<{ tasks: { id: string; deviceId: string; status: string }[] }>(routes.tasks, {}, token).then((r) => r.tasks),
+  claimTask: (token: string, id: string) => request<{ task: { id: string; prompt: string; input?: Record<string, unknown> } | null }>(routes.deviceClaimTask(id), { method: "POST" }, token).then((r) => r.task),
+  listTasks: (token: string) => request<{ tasks: { id: string; deviceId: string; prompt: string; status: string; progress: number; stepLabel: string | null; error: string | null; createdAt: string }[] }>(routes.tasks, {}, token).then((r) => r.tasks),
+  cancelTask: (token: string, id: string) => request<{ task: { id: string; status: string } }>(`${routes.tasks}/${id}/cancel`, { method: "POST" }, token).then((r) => r.task),
+  getTask: (token: string, id: string) => request<{ task: { id: string; status: string } }>(routes.task(id), {}, token).then((r) => r.task),
+  createApproval: (token: string, taskId: string, input: { directory: string; count: number; impactSummary: string }) => request<{ approval: { id: string; status: string } }>(routes.taskApproval(taskId), {
+    method: "POST", body: JSON.stringify({ tool: "fs.move_file", arguments: { directory: input.directory, count: input.count }, impactSummary: input.impactSummary }),
+  }, token).then((r) => r.approval),
+  getApproval: (token: string, taskId: string) => request<{ approval: { id: string; status: "pending" | "approved" | "denied" | "expired"; impactSummary?: string } }>(routes.taskApproval(taskId), {}, token).then((r) => r.approval),
+  resolveApproval: (token: string, approvalId: string, approved: boolean) => request<void>(approved ? routes.approvalApprove(approvalId) : routes.approvalDeny(approvalId), { method: "POST" }, token),
   summarize: (token: string, instruction: string, documents: { name: string; text: string }[]) => request<{ output: string }>("/v1/agent/summarize", {
     method: "POST", body: JSON.stringify({ instruction, documents }),
   }, token).then((r) => r.output),
   research: (token: string, prompt: string) => request<{ output: string; sources: { title: string; url: string }[] }>("/v1/agent/research", {
     method: "POST", body: JSON.stringify({ prompt }),
+  }, token),
+  executeMissionStep: (token: string, taskId: string) => request<{ output: string }>("/v1/agent/mission-step", {
+    method: "POST", body: JSON.stringify({ taskId }),
   }, token),
   finishTask: (token: string, id: string, result: { output?: string; error?: string }) => request<void>(`/v1/tasks/${id}/result`, {
     method: "POST", body: JSON.stringify(result),

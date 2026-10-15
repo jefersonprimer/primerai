@@ -9,6 +9,12 @@ const EnvSchema = z.object({
   PUBLIC_URL: z.string().url().default("http://localhost:8787"),
   CORS_ORIGIN: z.string().default("http://localhost:1420,http://localhost:8081,http://localhost:3000"),
   GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  CALENDAR_REDIRECT_URI: z.string().url().optional(),
+  NOTION_CLIENT_ID: z.string().optional(),
+  NOTION_CLIENT_SECRET: z.string().optional(),
+  NOTION_AUTHORIZATION_URL: z.string().url().optional(),
+  NOTION_REDIRECT_URI: z.string().url().optional(),
   PRIMERAI_MASTER_KEY: z
     .string()
     .min(1, "PRIMERAI_MASTER_KEY é obrigatório — gere com: openssl rand -base64 32"),

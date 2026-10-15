@@ -16,6 +16,7 @@ type Mode = 'login' | 'register';
 export function LoginScreen() {
   const { login, loginWithSession, register } = useSession();
   const [mode, setMode] = useState<Mode>('login');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export function LoginScreen() {
     setBusy(true);
     try {
       if (mode === 'login') await login(email.trim(), password);
-      else await register(email.trim(), password);
+      else await register(email.trim(), password, name.trim() || undefined);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'não foi possível conectar');
     } finally {
@@ -63,6 +64,21 @@ export function LoginScreen() {
           <ThemedText style={styles.googleLabel}>{busy ? 'Aguarde…' : 'Continuar com Google'}</ThemedText>
         </Pressable>
         <View style={styles.separator}><View style={styles.separatorLine} /><ThemedText themeColor="textSecondary" type="small">ou com e-mail</ThemedText><View style={styles.separatorLine} /></View>
+
+        <View style={styles.row}>
+          {mode === 'register' && (
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Seu nome (opcional)"
+              placeholderTextColor="#8b94a5"
+              autoCapitalize="words"
+              autoComplete="name"
+              maxLength={120}
+              style={styles.input}
+            />
+          )}
+        </View>
 
         <View style={styles.row}>
           <TextInput

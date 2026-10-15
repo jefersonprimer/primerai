@@ -3,7 +3,10 @@ export * from "./conversations";
 export * from "./tasks";
 export * from "./tools";
 
-export type Memory = { key: string; value: string; category?: string; createdAt: string; updatedAt?: string };
+export type Memory = { key: string; value: string; category?: string; origin?: string; projectId?: string | null; validUntil?: string | null; createdAt: string; updatedAt?: string };
+export type MemorySuggestion = { id: string; key: string; value: string; category: string; createdAt: string };
+export type MemorySettings = { useMemoriesInChat: boolean; automaticSuggestionsEnabled: boolean };
+export type ProjectProfile = { id: string; name: string; objective: string | null; stack: string[]; decisions: string[]; status: "active" | "paused" | "completed" | "archived"; lastConfirmedAt: string; createdAt: string; updatedAt: string };
 
 export const API_PREFIX = "/v1";
 
@@ -20,6 +23,12 @@ export const routes = {
   conversationMessages: (id: string) => `/v1/conversations/${id}/messages`,
   memories: "/v1/memories",
   memory: (key: string) => `/v1/memories/${encodeURIComponent(key)}`,
+  memorySettings: "/v1/memory-settings",
+  memorySuggestions: "/v1/memory-suggestions",
+  memorySuggestionAccept: (id: string) => `/v1/memory-suggestions/${id}/accept`,
+  memorySuggestionDismiss: (id: string) => `/v1/memory-suggestions/${id}/dismiss`,
+  projects: "/v1/projects",
+  project: (id: string) => `/v1/projects/${id}`,
   provider: (id: string) => `/v1/providers/${id}`,
   providerTest: (id: string) => `/v1/providers/${id}/test`,
   providerModels: (id: string) => `/v1/providers/${id}/models`,
@@ -34,6 +43,7 @@ export const routes = {
   tasks: "/v1/tasks",
   task: (id: string) => `/v1/tasks/${id}`,
   taskCancel: (id: string) => `/v1/tasks/${id}/cancel`,
+  taskApproval: (id: string) => `/v1/tasks/${id}/approval`,
   taskEvents: (id: string) => `/v1/tasks/${id}/events`,
   taskArtifacts: (id: string) => `/v1/tasks/${id}/artifacts`,
   approvalApprove: (id: string) => `/v1/approvals/${id}/approve`,

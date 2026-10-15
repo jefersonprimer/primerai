@@ -27,6 +27,17 @@ export type Message = {
   conversationId: string;
   role: "user" | "assistant" | "system";
   content: string;
+  parts: ({ type: "text"; text: string } | { type: "image"; attachmentId: string; mimeType: string; name: string })[];
+  createdAt: string;
+};
+
+export type ChatAttachment = {
+  id: string;
+  conversationId: string;
+  mimeType: string;
+  byteSize: number;
+  originalName: string;
+  status: "uploading" | "processing" | "ready" | "failed" | "expired";
   createdAt: string;
 };
 
@@ -47,6 +58,11 @@ export type Device = {
   status: "online" | "offline";
   lastSeenAt: string | null;
 };
+
+export type Memory = { key: string; value: string; category: string; origin: string; projectId: string | null; validUntil: string | null; createdAt: string; updatedAt: string };
+export type ProjectProfile = { id: string; name: string; objective: string | null; stack: string[]; decisions: string[]; status: "active" | "paused" | "completed" | "archived"; lastConfirmedAt: string; createdAt: string; updatedAt: string };
+export type MemorySettings = { useMemoriesInChat: boolean; automaticSuggestionsEnabled: boolean };
+export type MemoryUsage = { memories: Array<{ key: string; category: string }>; projects: Array<{ id: string; name: string }> };
 
 export function getSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
@@ -110,14 +126,24 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
   return data.messages || [];
 }
 
-export async function sendMessage(conversationId: string, content: string): Promise<Message[]> {
+export async function uploadChatImage(conversationId: string, image: { name: string; mimeType: string; data: string }): Promise<ChatAttachment> {
+  const res = await fetchWithAuth(`/v1/conversations/${conversationId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(image),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Erro ao enviar imagem.");
+  return data.attachment;
+}
+
+export async function sendMessage(conversationId: string, content: string, attachmentIds: string[] = []): Promise<{ messages: Message[]; memoryUsage: MemoryUsage }> {
   const res = await fetchWithAuth(`/v1/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, ...(attachmentIds.length ? { parts: attachmentIds.map((attachmentId) => ({ type: "image", attachmentId })) } : {}) }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || "Erro ao enviar mensagem.");
-  return data.messages;
+  return { messages: data.messages || [], memoryUsage: data.memoryUsage || { memories: [], projects: [] } };
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
@@ -139,4 +165,60 @@ export async function listDevices(): Promise<Device[]> {
   if (!res.ok) return [];
   const data = await res.json();
   return data.devices || [];
+}
+
+export async function listMemories(): Promise<Memory[]> {
+  const res = await fetchWithAuth("/v1/memories");
+  if (!res.ok) throw new Error("Erro ao carregar memórias.");
+  return (await res.json()).memories || [];
+}
+
+export async function listProjects(): Promise<ProjectProfile[]> {
+  const res = await fetchWithAuth("/v1/projects");
+  if (!res.ok) throw new Error("Erro ao carregar projetos.");
+  return (await res.json()).projects || [];
+}
+
+export async function createProject(input: Pick<ProjectProfile, "name"> & Partial<Pick<ProjectProfile, "objective" | "stack" | "decisions" | "status">>): Promise<ProjectProfile> {
+  const res = await fetchWithAuth("/v1/projects", { method: "POST", body: JSON.stringify(input) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Não foi possível criar o projeto.");
+  return data.project;
+}
+
+export async function updateProject(id: string, input: Partial<Pick<ProjectProfile, "name" | "objective" | "stack" | "decisions" | "status">> & { confirm?: boolean }): Promise<ProjectProfile> {
+  const res = await fetchWithAuth(`/v1/projects/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Não foi possível atualizar o projeto.");
+  return data.project;
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const res = await fetchWithAuth(`/v1/projects/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Não foi possível excluir o projeto.");
+}
+
+export async function getMemorySettings(): Promise<MemorySettings> {
+  const res = await fetchWithAuth("/v1/memory-settings");
+  if (!res.ok) throw new Error("Erro ao carregar configurações de memória.");
+  return (await res.json()).settings;
+}
+
+export async function updateMemorySettings(input: Partial<MemorySettings>): Promise<MemorySettings> {
+  const res = await fetchWithAuth("/v1/memory-settings", { method: "PATCH", body: JSON.stringify(input) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Não foi possível atualizar a memória.");
+  return data.settings;
+}
+
+export async function deleteMemory(key: string): Promise<void> {
+  const res = await fetchWithAuth(`/v1/memories/${encodeURIComponent(key)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Não foi possível apagar a memória.");
+}
+
+export async function saveMemory(key: string, value: string, category = "context", projectId?: string | null, validUntil?: string | null): Promise<Memory> {
+  const res = await fetchWithAuth(`/v1/memories/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value, category, projectId, validUntil }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || "Não foi possível salvar a memória.");
+  return data.memory;
 }

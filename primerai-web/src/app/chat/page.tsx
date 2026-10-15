@@ -6,6 +6,7 @@ import {
   Conversation,
   Device,
   Message,
+  MemoryUsage,
   Provider,
   User,
   createConversation,
@@ -17,7 +18,10 @@ import {
   listDevices,
   listProviders,
   sendMessage,
+  uploadChatImage,
 } from "@/lib/api";
+
+type PendingImage = { id: string; name: string; mimeType: string; data: string; preview: string };
 
 export default function ChatPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -32,8 +36,11 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const [memoryUsage, setMemoryUsage] = useState<MemoryUsage | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -85,6 +92,7 @@ export default function ChatPage() {
   async function selectConversation(id: string) {
     setActiveConversationId(id);
     setError(null);
+    setMemoryUsage(null);
     try {
       const msgs = await getMessages(id);
       setMessages(msgs);
@@ -98,6 +106,7 @@ export default function ChatPage() {
     setError(null);
     setActiveConversationId(null);
     setMessages([]);
+    setMemoryUsage(null);
   }
 
   // Delete conversation
@@ -122,12 +131,15 @@ export default function ChatPage() {
 
   // Send message
   async function handleSend(customContent?: string) {
-    const content = (customContent || input).trim();
+    const typedContent = (customContent || input).trim();
+    const content = typedContent || (images.length ? "Analise as imagens anexadas." : "");
     if (!content || sending) return;
 
     setError(null);
     setSending(true);
     setInput("");
+    const imagesToSend = images;
+    setImages([]);
 
     try {
       let convId = activeConversationId;
@@ -146,18 +158,21 @@ export default function ChatPage() {
         conversationId: convId,
         role: "user",
         content,
+        parts: imagesToSend.map((image) => ({ type: "image" as const, attachmentId: image.id, mimeType: image.mimeType, name: image.name })),
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, tempUserMsg]);
 
       // Call API
-      const newMessages = await sendMessage(convId, content);
+      const attachments = await Promise.all(imagesToSend.map((image) => uploadChatImage(convId!, image)));
+      const response = await sendMessage(convId, content, attachments.map((attachment) => attachment.id));
       
       // Update message list with real responses
       setMessages((prev) => {
         const filtered = prev.filter((m) => !m.id.startsWith("temp-"));
-        return [...filtered, ...newMessages];
+        return [...filtered, ...response.messages];
       });
+      setMemoryUsage(response.memoryUsage);
 
       // Update conversation title in sidebar if it changed
       setConversations((prev) =>
@@ -167,6 +182,30 @@ export default function ChatPage() {
       setError(err instanceof Error ? err.message : "Não foi possível enviar a mensagem.");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function pickImages(files: FileList | null) {
+    if (!files?.length) return;
+    const selection = Array.from(files).slice(0, 4 - images.length);
+    try {
+      const loaded = await Promise.all(selection.map(async (file) => {
+        if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) throw new Error("Use imagens JPEG, PNG, WebP ou GIF.");
+        if (file.size > 3 * 1024 * 1024) throw new Error("Cada imagem deve ter no máximo 3 MB.");
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Não foi possível ler a imagem."));
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsDataURL(file);
+        });
+        const comma = dataUrl.indexOf(",");
+        return { id: `${file.name}-${file.lastModified}-${Math.random()}`, name: file.name, mimeType: file.type, data: dataUrl.slice(comma + 1), preview: dataUrl };
+      }));
+      setImages((current) => [...current, ...loaded].slice(0, 4));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível preparar as imagens.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -205,6 +244,9 @@ export default function ChatPage() {
         <button className="new-chat-btn" onClick={startNewChat}>
           <span>＋</span> Novo Chat
         </button>
+
+        <Link className="new-chat-btn" href="/automacoes"><span>⚡</span> Automações</Link>
+        <Link className="new-chat-btn" href="/missoes"><span>◎</span> Modo missão</Link>
 
         <div className="sidebar-history">
           {conversations.map((c) => (
@@ -315,6 +357,11 @@ export default function ChatPage() {
 
         {/* Messages / Zero state */}
         <section className="chat-messages">
+          {memoryUsage && (memoryUsage.memories.length > 0 || memoryUsage.projects.length > 0) && (
+            <div style={{ margin: "12px auto 0", maxWidth: 760, padding: "8px 12px", border: "1px solid #303833", borderRadius: 8, color: "#aeb8aa", fontSize: 12 }}>
+              Usou do seu perfil: {[...memoryUsage.memories.map((memory) => `${memory.category}: ${memory.key}`), ...memoryUsage.projects.map((project) => `projeto: ${project.name}`)].join(" · ")}
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="chat-empty-state">
               <div
@@ -396,6 +443,9 @@ export default function ChatPage() {
                     )}
                   </div>
                   <div className={`message-body ${m.role}`}>{m.content}</div>
+                  {m.parts.map((part) => part.type === "image" ? (
+                    <div className="message-attachment" key={part.attachmentId}>🖼 {part.name}</div>
+                  ) : null)}
                 </div>
               ))}
               {sending && (
@@ -426,6 +476,15 @@ export default function ChatPage() {
         {/* Bottom Input Area */}
         <footer className="chat-input-wrapper">
           <div className="chat-input-box">
+            <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={(event) => void pickImages(event.target.files)} />
+            {images.length > 0 && (
+              <div className="chat-image-previews">
+                {images.map((image) => <div className="chat-image-preview" key={image.id}>
+                  <img src={image.preview} alt={image.name} />
+                  <button type="button" onClick={() => setImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Remover ${image.name}`}>×</button>
+                </div>)}
+              </div>
+            )}
             <textarea
               className="chat-textarea"
               placeholder="Envie uma mensagem ou instrução para o PC..."
@@ -436,6 +495,9 @@ export default function ChatPage() {
             />
             <div className="chat-input-actions">
               <div className="chat-chips-row">
+                <button className="chat-chip" type="button" onClick={() => fileInputRef.current?.click()} disabled={images.length >= 4}>
+                  🖼 Anexar imagem
+                </button>
                 <button
                   className="chat-chip"
                   onClick={() => setInput((prev) => prev + " Pesquisar na web: ")}
@@ -452,7 +514,7 @@ export default function ChatPage() {
               <button
                 className="send-message-btn"
                 onClick={() => handleSend()}
-                disabled={!input.trim() || sending}
+                disabled={(!input.trim() && !images.length) || sending}
                 title="Enviar mensagem (Enter)"
               >
                 ↑
